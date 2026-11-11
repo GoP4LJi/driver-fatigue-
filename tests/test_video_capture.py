@@ -116,6 +116,20 @@ class TestVideoCapture(unittest.TestCase):
             self.assertFalse(success)
             self.assertIsNone(frame)
 
+    def test_mirror_frame_horizontal_flip(self) -> None:
+        """Verify mirror_frame applies horizontal axis flip (columns reversed)."""
+        test_frame = np.array([
+            [[10, 10, 10], [20, 20, 20]],
+            [[30, 30, 30], [40, 40, 40]],
+        ], dtype=np.uint8)
+
+        mirrored = VideoCamera.mirror_frame(test_frame)
+        expected = np.array([
+            [[20, 20, 20], [10, 10, 10]],
+            [[40, 40, 40], [30, 30, 30]],
+        ], dtype=np.uint8)
+        np.testing.assert_array_equal(mirrored, expected)
+
     def test_save_screenshot_explicit_frame(self) -> None:
         """Verify save_screenshot writes given frame to specified directory."""
         mock_cv2 = MagicMock()

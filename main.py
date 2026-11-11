@@ -102,10 +102,13 @@ class DriverMonitoringApp:
                         time.sleep(0.01)
                         continue
 
-                    display_frame = frame.copy()
+                    # ARCHITECTURAL SEPARATION:
+                    # 'frame': Unmirrored original sensor capture (preserved for MediaPipe/ML).
+                    # 'display_frame': Horizontally mirrored frame for user-facing natural mirror preview.
+                    display_frame = cam.mirror_frame(frame)
                     measured_fps = cam.get_fps()
 
-                    # Render top telemetry status bar
+                    # Render top telemetry status bar on mirrored display_frame
                     cv2.rectangle(display_frame, (0, 0), (actual_w, 42), (25, 25, 25), -1)
                     hud_text = (
                         f"FPS: {measured_fps:.1f} | Res: {actual_w}x{actual_h} | "
@@ -142,7 +145,8 @@ class DriverMonitoringApp:
                         print("\nShutdown requested by user.")
                         break
                     elif key in (ord("s"), ord("S")):  # 's' for screenshot
-                        saved_path = cam.save_screenshot(frame)
+                        # Save the mirrored display frame so the saved image matches what the user sees
+                        saved_path = cam.save_screenshot(display_frame)
                         if saved_path:
                             screenshot_notification = f"SAVED: {saved_path.name}"
                             notification_timestamp = time.time()

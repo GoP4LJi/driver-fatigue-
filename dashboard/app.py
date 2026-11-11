@@ -13,10 +13,9 @@ Note:
     same unified 'DetectionPipeline' engine without duplicating any processing logic.
 """
 
-from typing import Optional
+from typing import Any, Optional
 import streamlit as st
 from config.settings import AppConfig, DriverState, settings
-from detection import DetectionPipeline, FrameAnalysisResult
 
 
 def setup_page_config() -> None:
@@ -44,7 +43,7 @@ def render_header() -> None:
     st.caption("Real-Time Vision-Based Driver Safety & Behavior Telemetry")
 
 
-def render_metrics_panel(result: Optional[FrameAnalysisResult] = None) -> None:
+def render_metrics_panel(result: Optional[Any] = None) -> None:
     """Render real-time telemetry KPI cards (State, EAR, MAR, Head Pose, FPS).
 
     Args:

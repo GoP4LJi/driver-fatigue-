@@ -167,11 +167,29 @@ class VideoCamera:
 
         return True, frame
 
+    @staticmethod
+    def mirror_frame(frame: np.ndarray) -> np.ndarray:
+        """Apply horizontal mirroring (flip around y-axis).
+
+        Produces natural mirror behavior where right-hand movement appears on the right
+        side of the display, keeping the original frame untouched for landmark detection.
+
+        Args:
+            frame (np.ndarray): Input BGR image frame.
+
+        Returns:
+            np.ndarray: Horizontally flipped image frame.
+        """
+        if cv2 is not None:
+            return cv2.flip(frame, 1)
+        return frame[:, ::-1, :]
+
     def save_screenshot(
         self,
         frame: Optional[np.ndarray] = None,
         output_dir: Optional[Path] = None,
         filename: Optional[str] = None,
+        mirror: bool = False,
     ) -> Optional[Path]:
         """Capture and save an image frame to disk.
 
@@ -179,6 +197,7 @@ class VideoCamera:
             frame: Optional frame to save. If None, captures a fresh frame from camera.
             output_dir: Destination folder. Defaults to project screenshots/ directory.
             filename: Target image filename. Defaults to timestamped name.
+            mirror: If True and capturing a fresh frame (frame is None), mirror before saving.
 
         Returns:
             Optional[Path]: Absolute path to the saved screenshot file, or None if failed.
@@ -190,7 +209,7 @@ class VideoCamera:
             success, captured_frame = self.read_frame()
             if not success or captured_frame is None:
                 return None
-            frame = captured_frame
+            frame = self.mirror_frame(captured_frame) if mirror else captured_frame
 
         target_dir = Path(output_dir) if output_dir else SCREENSHOTS_DIR
         target_dir.mkdir(parents=True, exist_ok=True)
@@ -319,10 +338,13 @@ def run_camera_preview(
                     time.sleep(0.01)
                     continue
 
-                display_frame = frame.copy()
+                # Architectural separation:
+                # 1. 'frame' is the unmirrored original sensor capture (preserved for MediaPipe/ML).
+                # 2. 'display_frame' is horizontally mirrored for user-facing natural mirror behavior.
+                display_frame = cam.mirror_frame(frame)
                 fps_val = cam.get_fps()
 
-                # Draw telemetry header overlay
+                # Draw telemetry header overlay on mirrored display_frame
                 cv2.rectangle(display_frame, (0, 0), (actual_w, 40), (20, 20, 20), -1)
                 hud_text = f"FPS: {fps_val:.1f} | Res: {actual_w}x{actual_h} | Press 's': Save | 'q': Exit"
                 cv2.putText(
@@ -356,7 +378,8 @@ def run_camera_preview(
                     print("User requested exit. Stopping stream...")
                     break
                 elif key in (ord("s"), ord("S")):  # 's' for screenshot
-                    saved_file = cam.save_screenshot(frame)
+                    # Save mirrored preview image so saved image matches what the user sees
+                    saved_file = cam.save_screenshot(display_frame)
                     if saved_file:
                         screenshot_feedback = f"SCREENSHOT SAVED: {saved_file.name}"
                         feedback_time = time.time()
