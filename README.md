@@ -125,26 +125,35 @@ driver-fatigue-detection/
 
 ---
 
-## 4. Team Responsibility Allocation (3 Developers)
+## 4. Team Responsibility Allocation (4 Developers)
 
-This architecture is optimized for parallel team development across three dedicated engineering streams:
+This architecture is optimized for parallel team development across four dedicated engineering streams:
+
+| Developer | Responsibility | Main Files | Git Branch |
+|---|---|---|---|
+| **Developer 1** | Computer Vision & Camera | `video_capture.py`, `face_detection.py`, `eye_detection.py`, `mouth_detection.py`, `head_pose.py`, `test_video_capture.py`, `test_face_detection.py` | `feat/computer-vision` |
+| **Developer 2** | Feature Extraction & Machine Learning | `feature_extraction.py`, `train_model.py`, `predict.py`, `driver_features.csv`, `test_features.py` | `feat/feature-extraction-ml` |
+| **Developer 3** | Decision Engine & Model Evaluation | `threshold_rules.py`, `hybrid_classifier.py`, ML evaluation and tests, `test_classifier.py` | `feat/decision-engine` |
+| **Developer 4** | UI, Audio Alerts & Integration | `audio_alert.py`, `draw_utils.py`, `dashboard/app.py`, `main.py`, `settings.py`, integration tests | `feat/ui-alerts-integration` |
 
 ```
-┌────────────────────────────────────────────────────────────────────────┐
-│                        3-DEVELOPER TEAM SPREAD                         │
-├─────────────────────┬──────────────────────────┬───────────────────────┤
-│ Developer 1         │ Developer 2              │ Developer 3           │
-│ Vision & Hardware   │ ML & Decision Engine     │ UI, Alerts & Pipeline │
-├─────────────────────┼──────────────────────────┼───────────────────────┤
-│ • video_capture.py  │ • feature_extraction.py  │ • settings.py         │
-│ • face_detection.py │ • train_model.py         │ • audio_alert.py      │
-│ • eye_detection.py  │ • predict.py             │ • draw_utils.py       │
-│ • mouth_detection.py│ • threshold_rules.py     │ • dashboard/app.py    │
-│ • head_pose.py      │ • hybrid_classifier.py   │ • main.py             │
-│ • test_video_capture│ • test_features/classifier│ • full integration   │
-│ Branch:             │ Branch:                  │ Branch:               │
-│ feat/vision-pipeline│ feat/ml-decision-engine  │ feat/ui-alerts-integ  │
-└─────────────────────┴──────────────────────────┴───────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                     4-DEVELOPER TEAM SPREAD                                      │
+├─────────────────────┬──────────────────────────┬─────────────────────────┬───────────────────────┤
+│ Developer 1         │ Developer 2              │ Developer 3             │ Developer 4           │
+│ Computer Vision &   │ Feature Extraction &     │ Decision Engine &       │ UI, Audio Alerts &    │
+│ Camera              │ Machine Learning         │ Model Evaluation        │ System Integration    │
+├─────────────────────┼──────────────────────────┼─────────────────────────┼───────────────────────┤
+│ • video_capture.py  │ • feature_extraction.py  │ • threshold_rules.py    │ • audio_alert.py      │
+│ • face_detection.py │ • train_model.py         │ • hybrid_classifier.py  │ • draw_utils.py       │
+│ • eye_detection.py  │ • predict.py             │ • ML evaluation & tests │ • dashboard/app.py    │
+│ • mouth_detection.py│ • driver_features.csv    │ • test_classifier.py    │ • main.py             │
+│ • head_pose.py      │ • test_features.py       │ • temporal counters     │ • settings.py         │
+│ • test_video_capture│                          │                         │ • integration tests   │
+│ • test_face_detect  │                          │                         │                       │
+│ Branch:             │ Branch:                  │ Branch:                 │ Branch:               │
+│ feat/computer-vision│ feat/feature-extraction-ml│ feat/decision-engine   │ feat/ui-alerts-integ  │
+└─────────────────────┴──────────────────────────┴─────────────────────────┴───────────────────────┘
 ```
 
 ---
@@ -153,13 +162,15 @@ This architecture is optimized for parallel team development across three dedica
 
 The project is structured for execution across 7 distinct phases:
 
-- **Phase 1: Video Capture & Hardware Abstraction** (`detection/video_capture.py`)
-- **Phase 2: MediaPipe Face Landmark Detection** (`detection/face_detection.py`)
-- **Phase 3: Mathematical Feature Extraction (EAR, MAR, Head Pose)** (`detection/eye_detection.py`, `detection/mouth_detection.py`, `detection/head_pose.py`, `features/feature_extraction.py`)
-- **Phase 4: Hybrid Decision Engine & ML Classification** (`decision_engine/`, `models/`)
-- **Phase 5: Audio Alert System Integration** (`alerts/audio_alert.py`)
-- **Phase 6: Interactive Streamlit Dashboard** (`dashboard/app.py`)
-- **Phase 7: End-to-End Testing, Latency Optimization & Final Release** (`tests/`, `main.py`)
+- [x] **Phase 1: Video Capture & Hardware Abstraction** (`detection/video_capture.py`) - *Completed*
+  - OpenCV camera initialization, resolution auto-negotiation, dynamic FPS calculation, screenshot capture, horizontal mirroring preview with original sensor frame preservation, and hardware resource cleanup.
+- [x] **Phase 2: MediaPipe Facial Landmark Detection** (`detection/face_detection.py`) - *Completed*
+  - Google MediaPipe Face Landmarker Tasks API (`RunningMode.VIDEO`), 468/478 normalized 3D landmarks, eye and mouth contour isolation, iris detection, monotonic timestamp tracking, missing-face warning banner, and mirrored preview integration.
+- [ ] **Phase 3: Mathematical Feature Extraction (EAR, MAR, Head Pose)** (`detection/eye_detection.py`, `detection/mouth_detection.py`, `detection/head_pose.py`, `features/feature_extraction.py`)
+- [ ] **Phase 4: Hybrid Decision Engine & ML Classification** (`decision_engine/`, `models/`)
+- [ ] **Phase 5: Audio Alert System Integration** (`alerts/audio_alert.py`)
+- [ ] **Phase 6: Interactive Streamlit Dashboard** (`dashboard/app.py`)
+- [ ] **Phase 7: End-to-End Testing, Latency Optimization & Final Release** (`tests/`, `main.py`)
 
 ---
 
@@ -213,13 +224,16 @@ git branch -M main
 ### 7.2 Branching Model
 All developers create feature branches branching from `main`:
 ```bash
-# Developer 1:
-git checkout -b feat/vision-pipeline
+# Developer 1 (Computer Vision & Camera):
+git checkout -b feat/computer-vision
 
-# Developer 2:
-git checkout -b feat/ml-decision-engine
+# Developer 2 (Feature Extraction & Machine Learning):
+git checkout -b feat/feature-extraction-ml
 
-# Developer 3:
+# Developer 3 (Decision Engine & Model Evaluation):
+git checkout -b feat/decision-engine
+
+# Developer 4 (UI, Audio Alerts & Integration):
 git checkout -b feat/ui-alerts-integration
 ```
 
@@ -227,21 +241,40 @@ git checkout -b feat/ui-alerts-integration
 
 ## 8. Running and Testing the Application
 
-### 8.1 Verification Test Suite
-Verify that all interfaces, data models, and architectural contracts pass:
+### 8.1 Model Asset Verification
+The MediaPipe Face Landmarker model asset is stored in `models/saved_models/face_landmarker.task`.
+If the model file is not present, download the official Google MediaPipe task model:
 ```bash
-python -m unittest discover tests
+curl -o models/saved_models/face_landmarker.task \
+  https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task
 ```
 
-### 8.2 Execution (Post-Implementation)
-- **Desktop OpenCV Application**:
+### 8.2 Automated Unit Test Suite
+Execute the comprehensive automated test suite (37 unit tests covering camera hardware mocking, MediaPipe inference, 2D/3D coordinate transformations, region extractors, and rule engine contracts):
+```bash
+python -m unittest discover -s tests -v
+```
+
+### 8.3 Phase 2 Real-Time Facial Landmark Detection
+- **Interactive Live Preview** (with contours, eye/mouth isolation, and mirrored preview):
   ```bash
   python main.py
   ```
-- **Streamlit Web Dashboard**:
+- **Live Preview with Complete 468-Point Mesh Overlay**:
   ```bash
-  streamlit run dashboard/app.py
+  python main.py --draw-mesh
   ```
+- **Headless Console Verification** (runs 30 frames, computes detection rate, and exits cleanly without GUI):
+  ```bash
+  python main.py --no-gui
+  ```
+- **Custom Hardware Configuration**:
+  ```bash
+  python main.py --camera 0 --width 1280 --height 720 --fps 30
+  ```
+- **Keyboard Shortcuts during Live Video**:
+  - `s` or `S`: Capture high-resolution mirrored screenshot to `screenshots/` directory
+  - `q`, `Q`, or `ESC`: Gracefully terminate stream and release camera/MediaPipe resources
 
 ---
 

@@ -6,7 +6,13 @@ and real-time color-coded driver status banners onto video frames.
 
 from typing import Any, Dict, Optional, Tuple
 import numpy as np
-from config.settings import DriverState
+
+try:
+    import cv2
+except ImportError:
+    cv2 = None
+
+from config.settings import DriverState, settings
 from features.feature_extraction import DriverFeatures
 
 
@@ -35,19 +41,93 @@ class Visualizer:
         landmarks: Any,
         draw_mesh: bool = False,
         draw_contours: bool = True,
+        draw_eyes: bool = True,
+        draw_mouth: bool = True,
+        draw_irises: bool = True,
     ) -> np.ndarray:
         """Render facial landmarks and feature contours (eyes, lips) on the video frame.
 
         Args:
             frame (np.ndarray): Original BGR image frame.
-            landmarks: MediaPipe NormalizedLandmarkList.
-            draw_mesh (bool): Whether to render complete tessellation mesh.
+            landmarks: MediaPipe collection of NormalizedLandmark objects.
+            draw_mesh (bool): Whether to render complete tessellation mesh points.
             draw_contours (bool): Whether to highlight key eye and lip contours.
+            draw_eyes (bool): Whether to highlight eye regions.
+            draw_mouth (bool): Whether to highlight mouth region.
+            draw_irises (bool): Whether to highlight iris points.
 
         Returns:
             np.ndarray: Annotated BGR frame.
         """
-        raise NotImplementedError("Phase 2 implementation: Landmark contour drawing.")
+        if frame is None or landmarks is None:
+            return frame
+
+        landmark_list = getattr(landmarks, "landmark", landmarks)
+        if not landmark_list:
+            return frame
+
+        h, w = frame.shape[:2]
+        cfg = settings.visualization
+        indices = settings.landmarks
+
+        # Draw full mesh points if requested
+        if draw_mesh and cv2 is not None:
+            for lm in landmark_list:
+                px = min(max(int(lm.x * w), 0), w - 1)
+                py = min(max(int(lm.y * h), 0), h - 1)
+                cv2.circle(frame, (px, py), cfg.point_radius, cfg.landmark_color, -1)
+
+        if draw_contours and cv2 is not None:
+            # Helper to extract and draw a contour polygon
+            def _draw_polygon(index_tuple, color, is_closed=True):
+                pts = []
+                for idx in index_tuple:
+                    if idx < len(landmark_list):
+                        lm = landmark_list[idx]
+                        px = min(max(int(lm.x * w), 0), w - 1)
+                        py = min(max(int(lm.y * h), 0), h - 1)
+                        pts.append([px, py])
+                if len(pts) > 1:
+                    cv2.polylines(
+                        frame,
+                        [np.array(pts, dtype=np.int32)],
+                        isClosed=is_closed,
+                        color=color,
+                        thickness=cfg.line_thickness,
+                        lineType=cv2.LINE_AA,
+                    )
+
+            if draw_eyes:
+                _draw_polygon(indices.LEFT_EYE_CONTOUR, cfg.eye_contour_color, is_closed=True)
+                _draw_polygon(indices.RIGHT_EYE_CONTOUR, cfg.eye_contour_color, is_closed=True)
+
+            if draw_irises and len(landmark_list) >= 478:
+                _draw_polygon(indices.LEFT_IRIS, cfg.iris_color, is_closed=True)
+                _draw_polygon(indices.RIGHT_IRIS, cfg.iris_color, is_closed=True)
+
+            if draw_mouth:
+                _draw_polygon(indices.MOUTH_OUTER, cfg.mouth_contour_color, is_closed=True)
+                _draw_polygon(indices.MOUTH_INNER, cfg.mouth_contour_color, is_closed=True)
+
+        return frame
+
+    def draw_face_not_detected_banner(self, frame: np.ndarray) -> np.ndarray:
+        """Render visual warning banner when no face is detected in the camera frame."""
+        if frame is None or cv2 is None:
+            return frame
+        h, w = frame.shape[:2]
+        cv2.rectangle(frame, (w // 2 - 200, h - 55), (w // 2 + 200, h - 15), (0, 0, 0), -1)
+        cv2.putText(
+            frame,
+            "ALIGN FACE WITH CAMERA",
+            (w // 2 - 165, h - 28),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (0, 165, 255),
+            2,
+            cv2.LINE_AA,
+        )
+        return frame
 
     def draw_head_pose_axes(
         self,

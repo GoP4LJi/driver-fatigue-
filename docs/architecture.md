@@ -146,57 +146,69 @@ sequenceDiagram
 
 ---
 
-## 5. Team Responsibility Allocation (3 Developers)
+## 5. Team Responsibility Allocation (4 Developers)
 
-To enable concurrent, conflict-free development across three engineers, responsibilities are partitioned along clean module boundaries:
+To enable concurrent, conflict-free development across four engineers, responsibilities are partitioned along clean module boundaries:
 
 ```mermaid
 classDiagram
     class Developer_1 {
-        +Vision & Hardware Lead
+        +Computer Vision & Camera
         -detection/video_capture.py
         -detection/face_detection.py
         -detection/eye_detection.py
         -detection/mouth_detection.py
         -detection/head_pose.py
         -tests/test_video_capture.py
+        -tests/test_face_detection.py
     }
     class Developer_2 {
-        +ML & Decision Engine Lead
+        +Feature Extraction & Machine Learning
         -features/feature_extraction.py
         -models/train_model.py
         -models/predict.py
-        -decision_engine/threshold_rules.py
-        -decision_engine/hybrid_classifier.py
+        -dataset/driver_features.csv
         -tests/test_features.py
-        -tests/test_classifier.py
     }
     class Developer_3 {
-        +UI, Alerts & Integration Lead
-        -config/settings.py
+        +Decision Engine & Model Evaluation
+        -decision_engine/threshold_rules.py
+        -decision_engine/hybrid_classifier.py
+        -tests/test_classifier.py
+        -model evaluation metrics
+    }
+    class Developer_4 {
+        +UI, Audio Alerts & Integration
         -alerts/audio_alert.py
         -visualization/draw_utils.py
         -dashboard/app.py
         -main.py
+        -config/settings.py
+        -integration tests
     }
 ```
 
 ### Allocation Breakdown:
 
-#### **Developer 1: Vision & Signal Processing Lead**
-- **Ownership**: Video capture hardware abstraction, MediaPipe Face Mesh integration, landmark extraction, EAR calculation, MAR calculation, and head pose estimation using `cv2.solvePnP`.
-- **Git Branch**: `feat/vision-pipeline`
-- **Deliverables**: Modules in `detection/` and `tests/test_video_capture.py`.
+#### **Developer 1: Computer Vision & Camera Lead**
+- **Ownership**: Video capture hardware abstraction, MediaPipe Face Landmarker integration, landmark extraction, EAR calculation, MAR calculation, and head pose estimation using `cv2.solvePnP`.
+- **Git Branch**: `feat/computer-vision`
+- **Deliverables**: Modules in `detection/`, `tests/test_video_capture.py`, `tests/test_face_detection.py`.
 
-#### **Developer 2: Machine Learning & Decision Logic Lead**
-- **Ownership**: Feature aggregation (`DriverFeatures`), tabular dataset collection/curation, model training/evaluation (`RandomForestClassifier`, `SVM`), inference engine, temporal sliding counter logic, and hybrid conflict arbitration.
-- **Git Branch**: `feat/ml-decision-engine`
-- **Deliverables**: Modules in `features/`, `models/`, `decision_engine/`, `dataset/driver_features.csv`, and classification tests.
+#### **Developer 2: Feature Extraction & Machine Learning Lead**
+- **Ownership**: Feature aggregation (`DriverFeatures`), tabular dataset collection/curation (`driver_features.csv`), offline model training and validation (`train_model.py`), and online ML inference (`predict.py`).
+- **Git Branch**: `feat/feature-extraction-ml`
+- **Deliverables**: Modules in `features/`, `models/`, `dataset/driver_features.csv`, and feature vector unit tests (`tests/test_features.py`).
 
-#### **Developer 3: UI, Audio Alerts & System Integration Lead**
-- **Ownership**: Centralized configuration management (`config/settings.py`), Pygame audio notification subsystem with cooldowns, OpenCV heads-up display rendering, Streamlit dashboard application, and `main.py` pipeline orchestration.
+#### **Developer 3: Decision Engine & Model Evaluation Lead**
+- **Ownership**: Temporal sliding counter logic (`threshold_rules.py`), deterministic safety overrides and conflict resolution (`hybrid_classifier.py`), ML evaluation metrics, confusion matrices, and decision engine unit tests.
+- **Git Branch**: `feat/decision-engine`
+- **Deliverables**: Modules in `decision_engine/`, decision tests (`tests/test_classifier.py`), model evaluation benchmarks.
+
+#### **Developer 4: UI, Audio Alerts & System Integration Lead**
+- **Ownership**: Centralized configuration management (`config/settings.py`), non-blocking Pygame audio notification system (`audio_alert.py`), OpenCV HUD overlays (`draw_utils.py`), Streamlit dashboard (`dashboard/app.py`), and `main.py` pipeline orchestration.
 - **Git Branch**: `feat/ui-alerts-integration`
-- **Deliverables**: Modules in `alerts/`, `visualization/`, `dashboard/`, `config/`, and `main.py`.
+- **Deliverables**: Modules in `alerts/`, `visualization/`, `dashboard/`, `config/settings.py`, `main.py`, and integration tests.
 
 ---
 
@@ -216,4 +228,38 @@ classDiagram
    - Build live Streamlit application with parameter sliders, real-time gauges, and webcam streams.
 7. **Phase 7: End-to-End Integration, Testing & Optimization**
    - Benchmark pipeline latency (targeting > 20 FPS on standard CPUs), execute integration tests, and calibrate sensitivity thresholds.
+
+---
+
+## 7. Phase 2 Architecture: MediaPipe Face Landmarker Tasks Pipeline
+
+Phase 2 introduces Google MediaPipe Face Landmarker Tasks API in `RunningMode.VIDEO` mode for temporal landmark tracking across continuous frames.
+
+### 7.1 Coordinate Flow and Frame Mirroring Pipeline
+
+To satisfy the dual requirements of **accurate facial landmark calculations** (which depend on original sensor camera geometry) and a **natural mirror experience** for the driver (raising right hand appears on right of screen):
+
+```mermaid
+flowchart LR
+    CAM["Camera Sensor\n(Webcam)"] -->|"read_frame()"| RAW["Unmirrored Original Frame\n(BGR)"]
+    RAW -->|"detect_landmarks()"| MP["MediaPipe Face Landmarker\n(RunningMode.VIDEO)"]
+    MP -->|"NormalizedLandmarks\n(468/478 3D coords)"| RES["FaceDetectionResult"]
+    RES -->|"draw_landmarks()"| ANNOT["Annotated Frame Copy\n(Contours & Mesh)"]
+    ANNOT -->|"mirror_frame()\n(cv2.flip(..., 1))"| MIRROR["Mirrored Display Frame"]
+    MIRROR -->|"draw_face_not_detected_banner()\n+ HUD Text"| HUD["Mirrored Frame with Readable HUD"]
+    HUD -->|"cv2.imshow()"| GUI["Driver Window Preview"]
+    HUD -->|"save_screenshot()"| PNG["Saved Mirrored Screenshot"]
+```
+
+### 7.2 Key Architectural Invariants
+1. **Unmirrored Original Sensor Invariance**:
+   - The unmirrored BGR frame is never modified or flipped before landmark extraction.
+   - All geometric calculations (and future EAR, MAR, head pose `solvePnP` in Phase 3) operate on the unmirrored frame coordinates to preserve true optical angles and camera matrix fidelity.
+2. **Strict Monotonic Millisecond Timestamps**:
+   - MediaPipe Tasks API in `RunningMode.VIDEO` requires strictly ascending timestamps (`t[i] > t[i-1]`). The `FaceDetector` enforces monotonicity automatically even when frames arrive with zero or negative jitter.
+3. **Graceful Missing Face Handling**:
+   - If no face is in view, `FaceDetectionResult.has_face` returns `False`, coordinates are `None`, and an amber "ALIGN FACE WITH CAMERA" HUD banner is displayed without pipeline crash or exception.
+4. **Isolated Dependency Loading**:
+   - Package `__init__.py` files remain completely lightweight; importing `detection.face_detection` or `detection.video_capture` introduces zero coupling to heavy ML, GUI, or audio libraries.
+
 

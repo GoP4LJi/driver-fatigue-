@@ -44,27 +44,67 @@ class CameraConfig:
 
 @dataclass(frozen=True)
 class MediaPipeConfig:
-    """MediaPipe Face Mesh detector parameters."""
+    """MediaPipe Face Landmarker Tasks API configuration parameters."""
+    model_path: Path = SAVED_MODELS_DIR / "face_landmarker.task"
+    model_url: str = "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task"
     max_num_faces: int = 1
-    refine_landmarks: bool = True
-    min_detection_confidence: float = 0.5
-    min_tracking_confidence: float = 0.5
+    min_face_detection_confidence: float = float(os.getenv("MIN_FACE_DETECTION_CONFIDENCE", "0.5"))
+    min_face_presence_confidence: float = float(os.getenv("MIN_FACE_PRESENCE_CONFIDENCE", "0.5"))
+    min_tracking_confidence: float = float(os.getenv("MIN_TRACKING_CONFIDENCE", "0.5"))
+    output_face_blendshapes: bool = False
+    output_facial_transformation_matrixes: bool = False
+
+
+@dataclass(frozen=True)
+class VisualizationConfig:
+    """Landmark visualization and graphics display styling."""
+    draw_landmarks: bool = True
+    draw_eye_regions: bool = True
+    draw_mouth_region: bool = True
+    draw_iris_landmarks: bool = True
+    landmark_color: Tuple[int, int, int] = (0, 255, 0)         # Green
+    eye_contour_color: Tuple[int, int, int] = (255, 200, 0)     # Cyan / Light Blue
+    mouth_contour_color: Tuple[int, int, int] = (0, 165, 255)   # Orange
+    iris_color: Tuple[int, int, int] = (0, 255, 255)            # Yellow
+    line_thickness: int = 1
+    point_radius: int = 1
 
 
 @dataclass(frozen=True)
 class LandmarkIndices:
     """Standard MediaPipe 468/478 Face Mesh landmark index mappings."""
-    # Eye indices for EAR calculation (6 points per eye)
+    # Key eye boundary points for EAR calculation (6 points per eye)
     # Left eye: [corner1, top1, top2, corner2, bottom2, bottom1]
     LEFT_EYE: Tuple[int, ...] = (362, 385, 387, 263, 373, 380)
     # Right eye: [corner1, top1, top2, corner2, bottom2, bottom1]
     RIGHT_EYE: Tuple[int, ...] = (33, 160, 158, 133, 153, 144)
+
+    # Full eye perimeter contour indices for visualization
+    LEFT_EYE_CONTOUR: Tuple[int, ...] = (
+        362, 382, 381, 380, 374, 373, 390, 249, 263, 466, 388, 387, 386, 385, 384, 398
+    )
+    RIGHT_EYE_CONTOUR: Tuple[int, ...] = (
+        33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246
+    )
+
+    # Iris landmarks (478-landmark refined mesh)
+    LEFT_IRIS: Tuple[int, ...] = (474, 475, 476, 477)
+    RIGHT_IRIS: Tuple[int, ...] = (469, 470, 471, 472)
 
     # Mouth inner/outer landmarks for MAR calculation
     MOUTH_TOP: int = 13
     MOUTH_BOTTOM: int = 14
     MOUTH_LEFT: int = 78
     MOUTH_RIGHT: int = 308
+    MOUTH: Tuple[int, ...] = (13, 14, 78, 308)
+
+    # Full mouth lips contour indices for visualization
+    MOUTH_OUTER: Tuple[int, ...] = (
+        61, 146, 91, 181, 84, 17, 314, 405, 321, 375, 291, 308, 324, 318, 402, 317, 14, 87, 178, 88, 95
+    )
+    MOUTH_INNER: Tuple[int, ...] = (
+        78, 95, 88, 178, 87, 14, 317, 402, 318, 324, 308, 191, 80, 81, 82, 13, 312, 311, 310, 415
+    )
 
     # 3D Head Pose Landmark Points for solvePnP
     NOSE_TIP: int = 1
@@ -125,6 +165,7 @@ class AppConfig:
     camera: CameraConfig = field(default_factory=CameraConfig)
     mediapipe: MediaPipeConfig = field(default_factory=MediaPipeConfig)
     landmarks: LandmarkIndices = field(default_factory=LandmarkIndices)
+    visualization: VisualizationConfig = field(default_factory=VisualizationConfig)
     thresholds: ThresholdConfig = field(default_factory=ThresholdConfig)
     alerts: AlertConfig = field(default_factory=AlertConfig)
     models: ModelConfig = field(default_factory=ModelConfig)
