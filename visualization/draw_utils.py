@@ -151,7 +151,44 @@ class Visualizer:
         Returns:
             np.ndarray: Annotated BGR frame with 3D projection axes (X=Red, Y=Green, Z=Blue).
         """
-        raise NotImplementedError("Phase 3 implementation: 3D head pose projection axes.")
+        if frame is None or cv2 is None or nose_point is None:
+            return frame
+
+        p_x, p_y = int(nose_point[0]), int(nose_point[1])
+        pitch_rad = np.radians(pitch)
+        yaw_rad = np.radians(yaw)
+        roll_rad = np.radians(roll)
+
+        # X-axis (Pitch / lateral axis) - Red in BGR: (0, 0, 255)
+        x1 = int(p_x + axis_length * (np.cos(yaw_rad) * np.cos(roll_rad)))
+        y1 = int(
+            p_y
+            + axis_length
+            * (
+                np.cos(pitch_rad) * np.sin(roll_rad)
+                + np.sin(pitch_rad) * np.sin(yaw_rad) * np.cos(roll_rad)
+            )
+        )
+        cv2.line(frame, (p_x, p_y), (x1, y1), (0, 0, 255), 2, cv2.LINE_AA)
+
+        # Y-axis (Yaw / vertical axis) - Green in BGR: (0, 255, 0)
+        x2 = int(p_x - axis_length * (np.cos(yaw_rad) * np.sin(roll_rad)))
+        y2 = int(
+            p_y
+            + axis_length
+            * (
+                np.cos(pitch_rad) * np.cos(roll_rad)
+                - np.sin(pitch_rad) * np.sin(yaw_rad) * np.sin(roll_rad)
+            )
+        )
+        cv2.line(frame, (p_x, p_y), (x2, y2), (0, 255, 0), 2, cv2.LINE_AA)
+
+        # Z-axis (Forward projection / line-of-sight axis) - Blue in BGR: (255, 0, 0)
+        x3 = int(p_x + axis_length * np.sin(yaw_rad))
+        y3 = int(p_y - axis_length * (np.sin(pitch_rad) * np.cos(yaw_rad)))
+        cv2.line(frame, (p_x, p_y), (x3, y3), (255, 0, 0), 2, cv2.LINE_AA)
+
+        return frame
 
     def draw_telemetry(
         self,
@@ -171,7 +208,60 @@ class Visualizer:
         Returns:
             np.ndarray: Annotated BGR frame.
         """
-        raise NotImplementedError("Phase 3 implementation: Real-time telemetry HUD overlay.")
+        if frame is None or cv2 is None or features is None:
+            return frame
+
+        # Semi-transparent telemetry HUD card on top-left of mirrored display frame
+        overlay = frame.copy()
+        box_x, box_y, box_w, box_h = 10, 50, 310, 85
+        cv2.rectangle(
+            overlay,
+            (box_x, box_y),
+            (box_x + box_w, box_y + box_h),
+            (15, 15, 15),
+            -1,
+        )
+        cv2.addWeighted(overlay, 0.75, frame, 0.25, 0, frame)
+        cv2.rectangle(
+            frame,
+            (box_x, box_y),
+            (box_x + box_w, box_y + box_h),
+            (60, 60, 60),
+            1,
+        )
+
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.44
+        line_type = cv2.LINE_AA
+
+        # Line 1: Eye Aspect Ratio
+        if features.face_detected and features.valid:
+            ear_color = (0, 255, 0) if features.average_ear >= settings.thresholds.ear_threshold else (0, 165, 255)
+            ear_text = f"EAR: {features.average_ear:.2f} (L:{features.left_ear:.2f} | R:{features.right_ear:.2f})"
+        else:
+            ear_color = (160, 160, 160)
+            ear_text = "EAR: N/A"
+        cv2.putText(frame, ear_text, (box_x + 8, box_y + 22), font, font_scale, ear_color, 1, line_type)
+
+        # Line 2: Mouth Aspect Ratio
+        if features.face_detected and features.valid:
+            mar_color = (0, 255, 0) if features.mar <= settings.thresholds.mar_threshold else (0, 165, 255)
+            mar_text = f"MAR: {features.mar:.2f}"
+        else:
+            mar_color = (160, 160, 160)
+            mar_text = "MAR: N/A"
+        cv2.putText(frame, mar_text, (box_x + 8, box_y + 44), font, font_scale, mar_color, 1, line_type)
+
+        # Line 3: Head Pose (Pitch, Yaw, Roll)
+        if features.face_detected and features.valid:
+            pose_text = f"POSE: P:{features.pitch:+.1f}* | Y:{features.yaw:+.1f}* | R:{features.roll:+.1f}*"
+            pose_color = (255, 255, 255)
+        else:
+            pose_text = "POSE: N/A"
+            pose_color = (160, 160, 160)
+        cv2.putText(frame, pose_text, (box_x + 8, box_y + 66), font, font_scale, pose_color, 1, line_type)
+
+        return frame
 
     def draw_state_banner(
         self,

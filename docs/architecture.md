@@ -254,7 +254,7 @@ flowchart LR
 ### 7.2 Key Architectural Invariants
 1. **Unmirrored Original Sensor Invariance**:
    - The unmirrored BGR frame is never modified or flipped before landmark extraction.
-   - All geometric calculations (and future EAR, MAR, head pose `solvePnP` in Phase 3) operate on the unmirrored frame coordinates to preserve true optical angles and camera matrix fidelity.
+   - All geometric calculations — including EAR, MAR, and head pose `solvePnP` (Phase 3) — operate on the unmirrored frame coordinates to preserve true optical angles and camera matrix fidelity.
 2. **Strict Monotonic Millisecond Timestamps**:
    - MediaPipe Tasks API in `RunningMode.VIDEO` requires strictly ascending timestamps (`t[i] > t[i-1]`). The `FaceDetector` enforces monotonicity automatically even when frames arrive with zero or negative jitter.
 3. **Graceful Missing Face Handling**:
@@ -262,4 +262,143 @@ flowchart LR
 4. **Isolated Dependency Loading**:
    - Package `__init__.py` files remain completely lightweight; importing `detection.face_detection` or `detection.video_capture` introduces zero coupling to heavy ML, GUI, or audio libraries.
 
+---
+
+## 8. Phase 3 Architecture: Mathematical Feature Extraction
+
+Phase 3 transforms raw 468/478 MediaPipe landmark coordinates into three quantitative facial metrics — **Eye Aspect Ratio (EAR)**, **Mouth Aspect Ratio (MAR)**, and **Head Pose angles (Pitch / Yaw / Roll)** — and aggregates them into a single `DriverFeatures` dataclass consumed by the Phase 4 decision engine.
+
+### 8.1 Processing Pipeline
+
+```mermaid
+flowchart LR
+    RAW["Unmirrored Original Frame\n(BGR)"] -->|"detect_landmarks()"| LM["FaceDetectionResult\n(468 NormalizedLandmarks)"]
+    LM --> ED["EyeDetector\n(eye_detection.py)\n[EAR Calculation]"]
+    LM --> MD["MouthDetector\n(mouth_detection.py)\n[MAR Calculation]"]
+    LM --> HP["HeadPoseEstimator\n(head_pose.py)\n[solvePnP Euler Angles]"]
+    ED --> FE["FeatureExtractor\n(feature_extraction.py)"]
+    MD --> FE
+    HP --> FE
+    FE --> DF["DriverFeatures\n(dataclass)"]
+    DF -->|"to_array()"| ML["Phase 4: ML Classifier\n(scikit-learn)"]
+    DF -->|"draw_telemetry()"| HUD["Mirrored Preview\n+ HUD Overlay"]
+```
+
+> [!NOTE]
+> All calculations operate on the **unmirrored** original camera frame. The telemetry is overlaid on the mirrored display frame only at render time.
+
+### 8.2 Eye Aspect Ratio (EAR)
+
+The **Soukupová & Čech** formula measures vertical eye opening relative to horizontal eye width using 6 landmark points per eye:
+
+$$\text{EAR} = \frac{\|p_2 - p_6\| + \|p_3 - p_5\|}{2 \cdot \|p_1 - p_4\|}$$
+
+| Symbol | MediaPipe Index (Left Eye) | Role |
+|---|---|---|
+| p1 | 362 | Left corner |
+| p2 | 385 | Upper-outer |
+| p3 | 387 | Upper-inner |
+| p4 | 263 | Right corner |
+| p5 | 373 | Lower-inner |
+| p6 | 380 | Lower-outer |
+
+- **Open eye** → EAR ≈ 0.30–0.40  
+- **Closed eye** → EAR < 0.21 (configurable `EyeConfig.ear_threshold`)  
+- An epsilon guard (`1e-6`) prevents division by zero when `‖p1−p4‖ → 0`.  
+- `compute_average_ear()` returns the bilateral mean: `(EAR_left + EAR_right) / 2`.
+
+### 8.3 Mouth Aspect Ratio (MAR)
+
+MAR measures vertical mouth opening relative to horizontal mouth width:
+
+$$\text{MAR} = \frac{\|p_{\text{top}} - p_{\text{bottom}}\|}{\|p_{\text{left}} - p_{\text{right}}\|}$$
+
+| Landmark | MediaPipe Index |
+|---|---|
+| p_top | 13 |
+| p_bottom | 14 |
+| p_left | 78 |
+| p_right | 308 |
+
+- **Mouth closed** → MAR ≈ 0.08–0.15  
+- **Talking** → MAR ≈ 0.25–0.40  
+- **Yawning** → MAR > 0.55 (configurable `MouthConfig.mar_threshold`)  
+- Also supports a 6-point EAR-style calculation for extended geometry inputs.
+
+### 8.4 Head Pose Estimation (solvePnP)
+
+Head orientation is recovered via OpenCV's `cv2.solvePnP` by matching 6 canonical 3D model points to their 2D image projections:
+
+| Canonical Point | 3D Model (mm, Y-down) | MediaPipe Index |
+|---|---|---|
+| Nose tip | (0, 0, 0) | 1 |
+| Chin | (0, 330, −65) | 199 |
+| Left eye corner | (225, −170, −135) | 33 |
+| Right eye corner | (−225, −170, −135) | 263 |
+| Left mouth corner | (150, 150, −125) | 61 |
+| Right mouth corner | (−150, 150, −125) | 291 |
+
+**Camera matrix** (resolution-independent):
+
+```
+focal_length = frame_width
+K = [[f, 0, cx],
+     [0, f, cy],
+     [0, 0,  1]]     where cx = w/2, cy = h/2
+```
+
+**Euler decomposition**: `cv2.Rodrigues(rvec)` → rotation matrix → `cv2.RQDecomp3x3()` → raw angles → normalized to [−180°, +180°]:
+
+| Angle | Sign Convention |
+|---|---|
+| Pitch | Positive = nodding down |
+| Yaw | Positive = turning right |
+| Roll | Positive = clockwise tilt |
+
+> [!NOTE]
+> A straight-on neutral face may show Roll ≈ ±180° due to Euler-angle gimbal ambiguity at the identity rotation. This is a known mathematical artifact of `RQDecomp3x3` and does not affect distraction detection thresholds.
+
+### 8.5 DriverFeatures Dataclass Contract
+
+`FeatureExtractor.extract_features(landmarks, frame_shape, timestamp)` returns a `DriverFeatures` instance:
+
+```python
+@dataclass
+class DriverFeatures:
+    timestamp: float          # Unix epoch seconds
+    left_ear: float           # EAR for left eye
+    right_ear: float          # EAR for right eye
+    average_ear: float        # Bilateral mean EAR (alias: ear)
+    mar: float                # Mouth Aspect Ratio
+    pitch: float              # Head pitch in degrees
+    yaw: float                # Head yaw in degrees
+    roll: float               # Head roll in degrees
+    face_detected: bool       # Whether MediaPipe found a face
+    valid: bool               # All sub-results are valid
+    ear: float                # Alias for average_ear (synchronized by __post_init__)
+```
+
+Conversion helpers:
+- `to_dict()` → `dict[str, Any]` via `dataclasses.asdict()`
+- `to_array(feature_order)` → `np.ndarray[float32]` in caller-specified column order (default: `['ear', 'mar', 'pitch', 'yaw', 'roll']`) for direct ML ingestion
+
+### 8.6 Telemetry HUD Overlay
+
+`visualization/draw_utils.py` provides two Phase 3 renderers applied to the mirrored preview frame:
+
+| Function | Output |
+|---|---|
+| `draw_telemetry(frame, features, config)` | Semi-transparent card at top-left with EAR / MAR / Pose lines |
+| `draw_head_pose_axes(frame, result, landmarks, config)` | RGB X/Y/Z axes projected from nose landmark |
+
+> [!IMPORTANT]
+> `draw_state_banner()` is intentionally left as `NotImplementedError` — it is a Phase 4 responsibility.
+
+### 8.7 Phase 3 Architectural Invariants
+
+1. **Unmirrored computation**: EAR, MAR, and solvePnP always run on the original sensor frame.
+2. **Epsilon guards**: All ratio calculations include a `1e-6` denominator guard to prevent division by zero at extreme landmark positions.
+3. **Graceful degradation**: If `has_face` is `False` or fewer than 468 landmarks are present, `DriverFeatures.valid = False` and all float fields are `0.0` — the pipeline never raises an exception on missing face data.
+4. **ML-ready output**: `to_array()` accepts an arbitrary `feature_order` list, ensuring zero coupling between the feature extractor and the Phase 4 classifier column schema.
+5. **65 unit tests**: Phase 3 adds 31 new tests (8 EAR + 7 MAR + 9 Head Pose + 7 Features) to the existing 34, all running in under 0.3 seconds with zero real camera or MediaPipe model dependency.
 

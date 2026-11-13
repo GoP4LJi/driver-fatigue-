@@ -62,10 +62,15 @@ class VisualizationConfig:
     draw_eye_regions: bool = True
     draw_mouth_region: bool = True
     draw_iris_landmarks: bool = True
+    show_telemetry_hud: bool = True
+    show_head_pose_axes: bool = True
     landmark_color: Tuple[int, int, int] = (0, 255, 0)         # Green
     eye_contour_color: Tuple[int, int, int] = (255, 200, 0)     # Cyan / Light Blue
     mouth_contour_color: Tuple[int, int, int] = (0, 165, 255)   # Orange
     iris_color: Tuple[int, int, int] = (0, 255, 255)            # Yellow
+    hud_bg_color: Tuple[int, int, int] = (20, 20, 20)           # Dark Gray
+    hud_text_color: Tuple[int, int, int] = (255, 255, 255)      # White
+    hud_accent_color: Tuple[int, int, int] = (0, 255, 0)        # Green
     line_thickness: int = 1
     point_radius: int = 1
 
@@ -113,6 +118,23 @@ class LandmarkIndices:
     RIGHT_EYE_CORNER: int = 263
     LEFT_MOUTH_CORNER: int = 61
     RIGHT_MOUTH_CORNER: int = 291
+    HEAD_POSE: Tuple[int, ...] = (1, 199, 33, 263, 61, 291)
+
+
+@dataclass(frozen=True)
+class HeadPoseConfig:
+    """Generic 3D facial model points and camera calibration parameters for solvePnP."""
+    # Canonical 3D facial model points (in mm/arbitrary world units)
+    # Coordinate system: X right (viewer right), Y down (image Y), Z forward (into screen)
+    model_points_3d: Tuple[Tuple[float, float, float], ...] = (
+        (0.0, 0.0, 0.0),          # Nose tip (1)
+        (0.0, 330.0, -65.0),      # Chin (199)
+        (-225.0, -170.0, -135.0), # Right eye outer corner (33, viewer left)
+        (225.0, -170.0, -135.0),  # Left eye outer corner (263, viewer right)
+        (-150.0, 150.0, -125.0),  # Right mouth corner (61, viewer left)
+        (150.0, 150.0, -125.0),   # Left mouth corner (291, viewer right)
+    )
+    focal_length_factor: float = 1.0  # Focal length estimate multiplier = factor * frame_width
 
 
 @dataclass(frozen=True)
@@ -166,6 +188,7 @@ class AppConfig:
     mediapipe: MediaPipeConfig = field(default_factory=MediaPipeConfig)
     landmarks: LandmarkIndices = field(default_factory=LandmarkIndices)
     visualization: VisualizationConfig = field(default_factory=VisualizationConfig)
+    head_pose: HeadPoseConfig = field(default_factory=HeadPoseConfig)
     thresholds: ThresholdConfig = field(default_factory=ThresholdConfig)
     alerts: AlertConfig = field(default_factory=AlertConfig)
     models: ModelConfig = field(default_factory=ModelConfig)

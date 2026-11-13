@@ -166,7 +166,12 @@ The project is structured for execution across 7 distinct phases:
   - OpenCV camera initialization, resolution auto-negotiation, dynamic FPS calculation, screenshot capture, horizontal mirroring preview with original sensor frame preservation, and hardware resource cleanup.
 - [x] **Phase 2: MediaPipe Facial Landmark Detection** (`detection/face_detection.py`) - *Completed*
   - Google MediaPipe Face Landmarker Tasks API (`RunningMode.VIDEO`), 468/478 normalized 3D landmarks, eye and mouth contour isolation, iris detection, monotonic timestamp tracking, missing-face warning banner, and mirrored preview integration.
-- [ ] **Phase 3: Mathematical Feature Extraction (EAR, MAR, Head Pose)** (`detection/eye_detection.py`, `detection/mouth_detection.py`, `detection/head_pose.py`, `features/feature_extraction.py`)
+- [x] **Phase 3: Mathematical Feature Extraction (EAR, MAR, Head Pose)** (`detection/eye_detection.py`, `detection/mouth_detection.py`, `detection/head_pose.py`, `features/feature_extraction.py`) — *Completed*
+  - **Eye Aspect Ratio (EAR)**: Soukupová & Čech 6-point formula with bilateral averaging and division-by-zero epsilon guard (`EyeDetector`, `EyeDetectionResult`).
+  - **Mouth Aspect Ratio (MAR)**: Vertical/horizontal ratio supporting 4-point and 6-point geometry; yawning threshold helper (`MouthDetector`, `MouthDetectionResult`).
+  - **Head Pose Estimation**: `cv2.solvePnP` (ITERATIVE) + `cv2.RQDecomp3x3` → Pitch / Yaw / Roll in degrees; resolution-independent camera matrix; angles normalized to [−180°, +180°] (`HeadPoseEstimator`, `HeadPoseResult`).
+  - **FeatureExtractor**: Aggregates EAR, MAR, and head-pose angles into `DriverFeatures` dataclass; `to_dict()` and `to_array(feature_order)` conversions for ML pipeline.
+  - **Telemetry HUD**: Semi-transparent HUD card and RGB head-pose axis overlay rendered on live mirrored preview (`visualization/draw_utils.py`).
 - [ ] **Phase 4: Hybrid Decision Engine & ML Classification** (`decision_engine/`, `models/`)
 - [ ] **Phase 5: Audio Alert System Integration** (`alerts/audio_alert.py`)
 - [ ] **Phase 6: Interactive Streamlit Dashboard** (`dashboard/app.py`)
@@ -250,31 +255,42 @@ curl -o models/saved_models/face_landmarker.task \
 ```
 
 ### 8.2 Automated Unit Test Suite
-Execute the comprehensive automated test suite (37 unit tests covering camera hardware mocking, MediaPipe inference, 2D/3D coordinate transformations, region extractors, and rule engine contracts):
+Execute the comprehensive automated test suite (**65 unit tests** covering camera hardware mocking, MediaPipe inference, 2D/3D coordinate transformations, EAR/MAR geometry, solvePnP head-pose estimation, FeatureExtractor contracts, and rule engine stubs):
 ```bash
 python -m unittest discover -s tests -v
 ```
 
-### 8.3 Phase 2 Real-Time Facial Landmark Detection
-- **Interactive Live Preview** (with contours, eye/mouth isolation, and mirrored preview):
+**Test file breakdown (Phase 1–3):**
+| Test File | Tests | Coverage |
+|---|---|---|
+| `test_video_capture.py` | 11 | Camera init, FPS, screenshot, error handling |
+| `test_face_detection.py` | 11 | MediaPipe landmark extraction, coordinate helpers |
+| `test_eye_detection.py` | 8 | EAR formula, bilateral averaging, edge cases |
+| `test_mouth_detection.py` | 7 | MAR formula, 4-pt/6-pt geometry, edge cases |
+| `test_head_pose.py` | 9 | solvePnP pipeline, angle conventions, failure modes |
+| `test_features.py` | 7 | FeatureExtractor aggregation, to_dict, to_array |
+| `test_threshold_rules.py` | 12 | Decision engine stubs and rule contracts |
+
+### 8.3 Phase 3 Real-Time Feature Extraction (EAR, MAR, Head Pose)
+- **Interactive Live Preview** (EAR, MAR, Pitch/Yaw/Roll HUD overlay):
   ```bash
   python main.py
   ```
-- **Live Preview with Complete 468-Point Mesh Overlay**:
+- **Live Preview with Full 468-Point Face Mesh**:
   ```bash
   python main.py --draw-mesh
   ```
-- **Headless Console Verification** (runs 30 frames, computes detection rate, and exits cleanly without GUI):
+- **Headless Console Verification** (30-frame synthetic loop, prints feature telemetry, exits cleanly):
   ```bash
   python main.py --no-gui
   ```
-- **Custom Hardware Configuration**:
+- **Custom Camera Configuration**:
   ```bash
   python main.py --camera 0 --width 1280 --height 720 --fps 30
   ```
 - **Keyboard Shortcuts during Live Video**:
-  - `s` or `S`: Capture high-resolution mirrored screenshot to `screenshots/` directory
-  - `q`, `Q`, or `ESC`: Gracefully terminate stream and release camera/MediaPipe resources
+  - `s` / `S`: Capture mirrored screenshot to `screenshots/`
+  - `q`, `Q`, or `ESC`: Gracefully terminate and release all resources
 
 ---
 

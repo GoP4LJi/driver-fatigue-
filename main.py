@@ -1,9 +1,10 @@
 """Main application entry point for the Real-Time Driver Fatigue and Distraction Detection System.
 
-Phase 2 Entry Point:
+Phase 3 Entry Point:
 Orchestrates real-time video acquisition, MediaPipe Face Landmarker Tasks API detection,
-facial landmark and contour visualization, mirrored driver preview, HUD status telemetry,
-screenshot capture, and clean resource cleanup.
+mathematical feature extraction (Eye Aspect Ratio, Mouth Aspect Ratio, 3D Head Pose solvePnP),
+facial contour visualization, mirrored driver preview, HUD status telemetry, screenshot capture,
+and clean resource cleanup.
 """
 
 import argparse
@@ -19,6 +20,7 @@ except ImportError:
 from config.settings import AppConfig, settings
 from detection.face_detection import FaceDetector
 from detection.video_capture import VideoCamera
+from features.feature_extraction import DriverFeatures, FeatureExtractor
 from visualization.draw_utils import Visualizer
 
 
@@ -29,6 +31,7 @@ class DriverMonitoringApp:
         config (AppConfig): Centralized configuration dataclass.
         camera (VideoCamera): Video acquisition hardware source.
         face_detector (FaceDetector): MediaPipe Face Landmarker Tasks API wrapper.
+        feature_extractor (FeatureExtractor): Physiological and pose feature computation engine.
         visualizer (Visualizer): Graphical overlay HUD renderer.
         draw_mesh (bool): Whether to render complete facial tessellation mesh points.
     """
@@ -42,7 +45,7 @@ class DriverMonitoringApp:
         fps: Optional[int] = None,
         draw_mesh: bool = False,
     ) -> None:
-        """Initialize application configuration, camera hardware, and face landmarker."""
+        """Initialize application configuration, camera hardware, face landmarker, and feature extractor."""
         self.config = config or settings
         self.draw_mesh = draw_mesh
 
@@ -66,17 +69,18 @@ class DriverMonitoringApp:
             min_tracking_confidence=self.config.mediapipe.min_tracking_confidence,
         )
 
+        self.feature_extractor = FeatureExtractor()
         self.visualizer = Visualizer()
 
     def run(self, no_gui: bool = False) -> None:
-        """Execute the real-time Phase 2 video capture and facial landmark detection loop.
+        """Execute the real-time Phase 3 video capture and feature extraction loop.
 
         Args:
             no_gui: If True, executes in console-only mode without opening an OpenCV GUI window.
         """
         print("=================================================================")
         print("🚗 Real-Time Driver Fatigue and Distraction Detection System")
-        print("▶️  Phase 2: MediaPipe Facial Landmark Detection")
+        print("▶️  Phase 3: Mathematical Feature Extraction (EAR, MAR, Head Pose)")
         print("=================================================================")
         print(f"Device Index: {self.camera.camera_index} | Target: {self.camera.width}x{self.camera.height} @ {self.camera.fps} FPS")
         print(f"Model Asset: {self.face_detector.model_path.name} | Mesh Overlay: {self.draw_mesh}")
@@ -93,9 +97,10 @@ class DriverMonitoringApp:
                 actual_w, actual_h = cam.get_resolution()
                 print(f"✓ Webcam stream active. Negotiated hardware resolution: {actual_w}x{actual_h}")
                 print("✓ MediaPipe Face Landmarker initialized in VIDEO mode.")
+                print("✓ Phase 3 Feature Extractor (EAR, MAR, solvePnP Head Pose) initialized.")
 
                 if no_gui:
-                    print("Executing console-only detection verification (30 frames)...")
+                    print("Executing console-only detection & feature extraction (30 frames)...")
                     detected_count = 0
                     for i in range(30):
                         success, frame = cam.read_frame()
@@ -105,17 +110,27 @@ class DriverMonitoringApp:
 
                         # Process unmirrored sensor frame through MediaPipe
                         result = detector.detect_landmarks(frame)
+                        features: DriverFeatures = self.feature_extractor.extract_features(
+                            result.landmarks if result.has_face else None,
+                            frame.shape,
+                            timestamp=time.time(),
+                        )
+
                         if result.has_face:
                             detected_count += 1
 
                         if (i + 1) % 10 == 0:
-                            status = (
-                                f"DETECTED ({result.num_landmarks} pts)"
-                                if result.has_face
-                                else "NOT DETECTED"
-                            )
+                            if features.face_detected and features.valid:
+                                status = (
+                                    f"DETECTED | EAR: {features.average_ear:.2f} "
+                                    f"(L:{features.left_ear:.2f}, R:{features.right_ear:.2f}) | "
+                                    f"MAR: {features.mar:.2f} | "
+                                    f"POSE: P:{features.pitch:+.1f}*, Y:{features.yaw:+.1f}*, R:{features.roll:+.1f}*"
+                                )
+                            else:
+                                status = "NOT DETECTED"
                             print(
-                                f"Captured {i + 1}/30 frames | Face: {status} | "
+                                f"Captured {i + 1}/30 frames | {status} | "
                                 f"Measured FPS: {cam.get_fps():.1f}"
                             )
                         time.sleep(0.033)
@@ -124,12 +139,12 @@ class DriverMonitoringApp:
                     if screenshot_path:
                         print(f"✓ Screenshot captured and saved to: {screenshot_path}")
                     print(
-                        f"✓ Phase 2 console verification complete. "
+                        f"✓ Phase 3 console verification complete. "
                         f"Face detected in {detected_count}/30 test frames."
                     )
                     return
 
-                window_name = "Driver Monitoring System - Phase 2 Facial Landmark Feed"
+                window_name = "Driver Monitoring System - Phase 3 Live Telemetry Feed"
                 cv2.namedWindow(window_name, cv2.WINDOW_AUTOSIZE)
 
                 screenshot_notification = ""
@@ -144,7 +159,14 @@ class DriverMonitoringApp:
                     # 1. Pipeline Step: Landmark detection on unmirrored original sensor frame
                     result = detector.detect_landmarks(frame)
 
-                    # 2. Pipeline Step: Draw landmarks on an unmirrored frame copy
+                    # 2. Pipeline Step: Mathematical feature extraction on unmirrored sensor landmarks
+                    features: DriverFeatures = self.feature_extractor.extract_features(
+                        result.landmarks if result.has_face else None,
+                        frame.shape,
+                        timestamp=time.time(),
+                    )
+
+                    # 3. Pipeline Step: Draw landmarks on an unmirrored frame copy
                     annotated_original = frame.copy()
                     if result.has_face:
                         annotated_original = self.visualizer.draw_landmarks(
@@ -162,15 +184,15 @@ class DriverMonitoringApp:
                         status_text = "FACE NOT DETECTED"
                         status_color = (0, 165, 255)  # Amber / Warning
 
-                    # 3. Pipeline Step: Horizontally mirror annotated frame for natural user preview
+                    # 4. Pipeline Step: Horizontally mirror annotated frame for natural driver preview
                     display_frame = cam.mirror_frame(annotated_original)
                     measured_fps = cam.get_fps()
 
-                    # 4. Pipeline Step: Overlay warning banner if no face is detected
+                    # 5. Pipeline Step: Overlay warning banner if no face is detected
                     if not result.has_face:
                         display_frame = self.visualizer.draw_face_not_detected_banner(display_frame)
 
-                    # 5. Pipeline Step: Render top HUD status bar (left-to-right text on mirrored frame)
+                    # 6. Pipeline Step: Render top HUD status bar (left-to-right text on mirrored frame)
                     cv2.rectangle(display_frame, (0, 0), (actual_w, 42), (25, 25, 25), -1)
                     hud_text = (
                         f"FPS: {measured_fps:.1f} | Res: {actual_w}x{actual_h} | "
@@ -187,7 +209,14 @@ class DriverMonitoringApp:
                         cv2.LINE_AA,
                     )
 
-                    # 6. Pipeline Step: Temporary screenshot saved overlay
+                    # 7. Pipeline Step: Render Phase 3 Physiological Telemetry HUD
+                    display_frame = self.visualizer.draw_telemetry(
+                        display_frame,
+                        features,
+                        measured_fps,
+                    )
+
+                    # 8. Pipeline Step: Temporary screenshot saved overlay
                     if time.time() - notification_timestamp < 2.5 and screenshot_notification:
                         cv2.putText(
                             display_frame,
@@ -228,7 +257,7 @@ class DriverMonitoringApp:
 def main() -> None:
     """CLI application entry point."""
     parser = argparse.ArgumentParser(
-        description="Real-Time Driver Fatigue and Distraction Detection System - Phase 2"
+        description="Real-Time Driver Fatigue and Distraction Detection System - Phase 3"
     )
     parser.add_argument(
         "--camera",
