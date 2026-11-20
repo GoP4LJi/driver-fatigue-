@@ -252,8 +252,9 @@ class TestFaceDetectorLifecycle(unittest.TestCase):
         # Verify calling close again is safe
         detector.close()
 
+    @patch("pathlib.Path.exists", return_value=True)
     @patch("detection.face_detection.vision.FaceLandmarker.create_from_options")
-    def test_context_manager_lifecycle(self, mock_create: MagicMock) -> None:
+    def test_context_manager_lifecycle(self, mock_create: MagicMock, mock_exists: MagicMock) -> None:
         """Verify context manager handles initialization and release automatically."""
         mock_instance = MagicMock()
         mock_create.return_value = mock_instance

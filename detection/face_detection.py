@@ -18,7 +18,9 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 # Set Matplotlib cache dir to prevent writable directory warnings
-os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
+import tempfile
+mpl_cache_dir = Path(tempfile.gettempdir()) / "matplotlib"
+os.environ.setdefault("MPLCONFIGDIR", str(mpl_cache_dir))
 
 try:
     import cv2

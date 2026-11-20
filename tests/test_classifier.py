@@ -28,18 +28,29 @@ class TestClassifier(unittest.TestCase):
         engine.reset()
         self.assertEqual(engine.closed_eyes_counter, 0)
 
-    def test_placeholder_methods_raise_not_implemented(self) -> None:
-        """Verify un-implemented decision logic raises NotImplementedError prior to Phase 4."""
+    def test_implemented_decision_logic(self) -> None:
+        """Verify Phase 4 implemented decision logic executes and returns valid states."""
         engine = TemporalRuleEngine()
-        sample_features = DriverFeatures()
-        with self.assertRaises(NotImplementedError):
-            engine.update(sample_features)
+        sample_features = DriverFeatures(
+            average_ear=0.32,
+            mar=0.15,
+            pitch=0.0,
+            yaw=0.0,
+            roll=0.0,
+            face_detected=True,
+            valid=True,
+        )
+        state, telemetry = engine.update(sample_features)
+        self.assertIsInstance(state, DriverState)
+        self.assertEqual(state, DriverState.ALERT)
+        self.assertIn("closed_eyes_counter", telemetry)
 
         hybrid = HybridDecisionEngine(rule_engine=engine)
-        with self.assertRaises(NotImplementedError):
-            hybrid.decide(sample_features)
+        h_state, h_meta = hybrid.decide(sample_features)
+        self.assertIsInstance(h_state, DriverState)
+        self.assertEqual(h_state, DriverState.ALERT)
+        self.assertIn("hybrid_confidence", h_meta)
 
 
 if __name__ == "__main__":
     unittest.main()
-

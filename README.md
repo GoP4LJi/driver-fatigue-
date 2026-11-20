@@ -172,7 +172,12 @@ The project is structured for execution across 7 distinct phases:
   - **Head Pose Estimation**: `cv2.solvePnP` (ITERATIVE) + `cv2.RQDecomp3x3` → Pitch / Yaw / Roll in degrees; resolution-independent camera matrix; angles normalized to [−180°, +180°] (`HeadPoseEstimator`, `HeadPoseResult`).
   - **FeatureExtractor**: Aggregates EAR, MAR, and head-pose angles into `DriverFeatures` dataclass; `to_dict()` and `to_array(feature_order)` conversions for ML pipeline.
   - **Telemetry HUD**: Semi-transparent HUD card and RGB head-pose axis overlay rendered on live mirrored preview (`visualization/draw_utils.py`).
-- [ ] **Phase 4: Hybrid Decision Engine & ML Classification** (`decision_engine/`, `models/`)
+- [x] **Phase 4: Hybrid Decision Engine & ML Classification** (`decision_engine/`, `models/`) — *Completed*
+  - **Rule-Based Detection**: `TemporalRuleEngine` tracks consecutive frame counters for EAR (< 0.25), MAR (> 0.60), and head pose angles (pitch, yaw, roll) with monotonic timing, recovery smoothing, and missing-face safety handling.
+  - **Machine Learning Classification**: `ModelTrainer` and `StatePredictor` using scikit-learn (`RandomForest`, `SVM`, `GradientBoosting`); train/test split, accuracy, precision, recall, F1, confusion matrix, and joblib serialization.
+  - **Dataset Schema & Synthetic Testing Generator**: Standardized feature schema `[ear, mar, pitch, yaw, roll, state]` documented in `dataset/schema.md` with optional synthetic testing generator strictly for CI/CD test verification.
+  - **Hybrid Decision Engine**: `HybridDecisionEngine` fuses deterministic safety override rules with statistical ML probabilities and sliding-window temporal smoothing.
+  - **Live UI & Telemetry**: Dynamic state warning banner, comprehensive HUD card displaying FPS, Face detection status, EAR, MAR, Head Pose, State, ML prediction, and Hybrid classification result.
 - [ ] **Phase 5: Audio Alert System Integration** (`alerts/audio_alert.py`)
 - [ ] **Phase 6: Interactive Streamlit Dashboard** (`dashboard/app.py`)
 - [ ] **Phase 7: End-to-End Testing, Latency Optimization & Final Release** (`tests/`, `main.py`)
@@ -255,56 +260,85 @@ curl -o models/saved_models/face_landmarker.task \
 ```
 
 ### 8.2 Automated Unit Test Suite
-Execute the comprehensive automated test suite (**65 unit tests** covering camera hardware mocking, MediaPipe inference, 2D/3D coordinate transformations, EAR/MAR geometry, solvePnP head-pose estimation, FeatureExtractor contracts, and rule engine stubs):
+Execute the comprehensive automated test suite (**96 unit tests** passing with 100% success rate, covering camera hardware mocking, MediaPipe inference, 2D/3D coordinate transformations, EAR/MAR geometry, solvePnP head-pose estimation, FeatureExtractor contracts, temporal rule counters, ML model training, model serialization, real-time prediction, and hybrid fusion arbitration):
 ```bash
 python -m unittest discover -s tests -v
 ```
 
-**Test file breakdown (Phase 1–3):**
+**Test file breakdown (Phase 1–4):**
 | Test File | Tests | Coverage |
 |---|---|---|
-| `test_video_capture.py` | 11 | Camera init, FPS, screenshot, error handling |
-| `test_face_detection.py` | 11 | MediaPipe landmark extraction, coordinate helpers |
-| `test_eye_detection.py` | 8 | EAR formula, bilateral averaging, edge cases |
-| `test_mouth_detection.py` | 7 | MAR formula, 4-pt/6-pt geometry, edge cases |
-| `test_head_pose.py` | 9 | solvePnP pipeline, angle conventions, failure modes |
-| `test_features.py` | 7 | FeatureExtractor aggregation, to_dict, to_array |
-| `test_threshold_rules.py` | 12 | Decision engine stubs and rule contracts |
+| `test_video_capture.py` | 11 | Camera init, FPS, screenshot, context manager, error handling |
+| `test_face_detection.py` | 19 | MediaPipe landmark extraction, coordinate projection, monotonic timestamps |
+| `test_eye_detection.py` | 8 | EAR formula, bilateral averaging, edge cases, epsilon guard |
+| `test_mouth_detection.py` | 7 | MAR formula, 4-pt/6-pt geometry, edge cases, yawn helper |
+| `test_head_pose.py` | 9 | solvePnP pipeline, angle conventions, camera matrix, failure modes |
+| `test_features.py` | 7 | FeatureExtractor aggregation, to_dict, to_array (custom/default orders) |
+| `test_classifier.py` | 3 | DriverState enum targets, counter init/reset, decision logic execution |
+| `test_threshold_rules.py` | 10 | Heuristic thresholds, EAR/MAR/Pose temporal counters, recovery smoothing, missing face |
+| `test_hybrid_classifier.py` | 8 | Rule-ML fusion, safety override precedence, rule fallback, sliding-window smoothing |
+| `test_model_training.py` | 8 | Synthetic generator, dataset loading, ModelTrainer (RF/SVM/GB), metrics, artifact saving |
+| `test_prediction.py` | 6 | StatePredictor loading, offline fallback, inference on DriverFeatures, missing face |
+| **Total** | **96** | **All 96 Tests Passing (0 Failures, 0 Errors, 0 Warnings)** |
 
-### 8.3 Phase 3 Real-Time Feature Extraction (EAR, MAR, Head Pose)
-- **Interactive Live Preview** (EAR, MAR, Pitch/Yaw/Roll HUD overlay):
+### 8.3 Machine Learning Model Training & Evaluation
+To train a classifier on feature records using scikit-learn:
+```bash
+# 1. Train on existing feature dataset (defaults to dataset/driver_features.csv)
+python models/train_model.py --model-type random_forest
+
+# 2. Train with a synthetic test dataset (generates 600 synthetic samples for test harness validation)
+python models/train_model.py --generate-synthetic --samples 600 --output models/saved_models/driver_state_classifier.joblib
+
+# 3. Train using Gradient Boosting or Support Vector Machine
+python models/train_model.py --model-type gradient_boosting
+python models/train_model.py --model-type svm
+```
+
+> [!IMPORTANT]
+> **Dataset Ethics & Real-World Validation**:
+> Synthetic data generated by `--generate-synthetic` is strictly intended for software integration testing and continuous integration verification. Real-world safety claims require genuine human benchmark datasets (e.g. YawDD or NTHU).
+
+### 8.4 Phase 4 Real-Time Hybrid Decision Monitoring
+- **Interactive Live Feed** (Full Hybrid Telemetry HUD + Color-Coded State Banner):
   ```bash
   python main.py
+  ```
+- **Live Preview with Custom ML and Rule Weights**:
+  ```bash
+  python main.py --ml-weight 0.6 --rule-weight 0.4
+  ```
+- **Live Preview with Custom Model Path**:
+  ```bash
+  python main.py --model-path models/saved_models/driver_state_classifier.joblib
   ```
 - **Live Preview with Full 468-Point Face Mesh**:
   ```bash
   python main.py --draw-mesh
   ```
-- **Headless Console Verification** (30-frame synthetic loop, prints feature telemetry, exits cleanly):
+- **Headless Console Verification** (30-frame live verification loop, prints classification telemetry, exits cleanly):
   ```bash
   python main.py --no-gui
   ```
-- **Custom Camera Configuration**:
-  ```bash
-  python main.py --camera 0 --width 1280 --height 720 --fps 30
-  ```
 - **Keyboard Shortcuts during Live Video**:
-  - `s` / `S`: Capture mirrored screenshot to `screenshots/`
-  - `q`, `Q`, or `ESC`: Gracefully terminate and release all resources
+  - `s` / `S`: Capture mirrored preview screenshot with HUD annotations to `screenshots/`
+  - `q`, `Q`, or `ESC`: Gracefully terminate and release all camera and detector resources
 
 ---
 
-## 9. Architectural Integrity & Missing Dependencies
+## 9. Architectural Integrity & Verification Checklist
 
 ### Verification Checklist:
-- [x] Strict separation between detection engine and user interface.
+- [x] Strict separation between detection engine, classification logic, and user interface.
 - [x] Zero circular dependencies between packages.
 - [x] Strongly typed data transfer contracts (`DriverFeatures`, `DriverState`).
-- [x] Decoupled asynchronous audio system with cooldown prevention.
-- [x] Comprehensive test scaffolding.
+- [x] Deterministic safety override ensuring prolonged eye closure or yawning always triggers `DROWSY`.
+- [x] Graceful degradation to pure rule engine when ML model is missing or offline.
+- [x] Unmirrored camera sensor frame preserved for inference; preview horizontally mirrored for natural driver ergonomics.
+- [x] 96 automated unit tests passing in ~2.6 seconds.
 
 ### External Asset Requirements (Identified for Phase 5):
 - Alert sound files: Add `drowsy_alert.wav` and `distracted_alert.wav` into `alerts/sounds/`.
-- Training data: Feature logging in Phase 4 will populate `dataset/driver_features.csv`.
+- Real labeled data: Populate `dataset/driver_features.csv` with genuine driver recordings.
 
 # driver-fatigue-

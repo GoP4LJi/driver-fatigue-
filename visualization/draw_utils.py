@@ -196,14 +196,16 @@ class Visualizer:
         features: DriverFeatures,
         fps: float,
         state_counters: Optional[Dict[str, int]] = None,
+        classification_result: Optional[Dict[str, Any]] = None,
     ) -> np.ndarray:
-        """Render real-time numerical metrics HUD (EAR, MAR, Euler angles, FPS).
+        """Render real-time numerical metrics HUD (EAR, MAR, Euler angles, FPS, State, ML pred).
 
         Args:
             frame: Target BGR frame.
             features: Calculated DriverFeatures for the current frame.
             fps: Measured frames per second.
             state_counters: Active consecutive trigger frame counts.
+            classification_result: Optional output dictionary from HybridDecisionEngine.
 
         Returns:
             np.ndarray: Annotated BGR frame.
@@ -213,7 +215,11 @@ class Visualizer:
 
         # Semi-transparent telemetry HUD card on top-left of mirrored display frame
         overlay = frame.copy()
-        box_x, box_y, box_w, box_h = 10, 50, 310, 85
+        has_clf = classification_result is not None
+        box_x, box_y = 10, 50
+        box_w = 340
+        box_h = 130 if has_clf else 85
+
         cv2.rectangle(
             overlay,
             (box_x, box_y),
@@ -221,7 +227,7 @@ class Visualizer:
             (15, 15, 15),
             -1,
         )
-        cv2.addWeighted(overlay, 0.75, frame, 0.25, 0, frame)
+        cv2.addWeighted(overlay, 0.78, frame, 0.22, 0, frame)
         cv2.rectangle(
             frame,
             (box_x, box_y),
@@ -231,7 +237,7 @@ class Visualizer:
         )
 
         font = cv2.FONT_HERSHEY_SIMPLEX
-        font_scale = 0.44
+        font_scale = 0.42
         line_type = cv2.LINE_AA
 
         # Line 1: Eye Aspect Ratio
@@ -241,7 +247,7 @@ class Visualizer:
         else:
             ear_color = (160, 160, 160)
             ear_text = "EAR: N/A"
-        cv2.putText(frame, ear_text, (box_x + 8, box_y + 22), font, font_scale, ear_color, 1, line_type)
+        cv2.putText(frame, ear_text, (box_x + 8, box_y + 20), font, font_scale, ear_color, 1, line_type)
 
         # Line 2: Mouth Aspect Ratio
         if features.face_detected and features.valid:
@@ -250,7 +256,7 @@ class Visualizer:
         else:
             mar_color = (160, 160, 160)
             mar_text = "MAR: N/A"
-        cv2.putText(frame, mar_text, (box_x + 8, box_y + 44), font, font_scale, mar_color, 1, line_type)
+        cv2.putText(frame, mar_text, (box_x + 8, box_y + 40), font, font_scale, mar_color, 1, line_type)
 
         # Line 3: Head Pose (Pitch, Yaw, Roll)
         if features.face_detected and features.valid:
@@ -259,7 +265,36 @@ class Visualizer:
         else:
             pose_text = "POSE: N/A"
             pose_color = (160, 160, 160)
-        cv2.putText(frame, pose_text, (box_x + 8, box_y + 66), font, font_scale, pose_color, 1, line_type)
+        cv2.putText(frame, pose_text, (box_x + 8, box_y + 60), font, font_scale, pose_color, 1, line_type)
+
+        # Phase 4 Classification Metrics
+        if has_clf:
+            st = classification_result.get("hybrid_state", DriverState.ALERT)
+            st_val = getattr(st, "value", str(st))
+            conf = classification_result.get("hybrid_confidence", 1.0)
+            if st == DriverState.DROWSY or st_val == "DROWSY":
+                st_color = (0, 0, 255)    # Red
+            elif st == DriverState.DISTRACTED or st_val == "DISTRACTED":
+                st_color = (0, 165, 255)  # Orange
+            else:
+                st_color = (0, 255, 0)    # Green
+
+            state_line = f"STATE: {st_val} ({conf * 100:.0f}%) [Hybrid Engine]"
+            cv2.putText(frame, state_line, (box_x + 8, box_y + 84), font, font_scale, st_color, 1, line_type)
+
+            ml_st = classification_result.get("ml_state")
+            ml_conf = classification_result.get("ml_confidence", 0.0)
+            ml_loaded = classification_result.get("ml_loaded", False)
+            if ml_loaded and ml_st:
+                ml_val = getattr(ml_st, "value", str(ml_st))
+                ml_line = f"ML PRED: {ml_val} ({ml_conf * 100:.0f}%)"
+            else:
+                ml_line = "ML PRED: OFFLINE (Rule Fallback)"
+
+            r_st = classification_result.get("rule_state", DriverState.ALERT)
+            r_val = getattr(r_st, "value", str(r_st))
+            clf_sub = f"{ml_line} | RULE: {r_val}"
+            cv2.putText(frame, clf_sub, (box_x + 8, box_y + 106), font, 0.38, (200, 200, 200), 1, line_type)
 
         return frame
 
@@ -270,7 +305,7 @@ class Visualizer:
         confidence: float = 1.0,
         subtext: Optional[str] = None,
     ) -> np.ndarray:
-        """Render color-coded top banner indicating current driver state (ALERT / DROWSY / DISTRACTED).
+        """Render color-coded banner indicating current driver state (ALERT / DROWSY / DISTRACTED).
 
         Args:
             frame: Target BGR frame.
@@ -281,5 +316,55 @@ class Visualizer:
         Returns:
             np.ndarray: Frame with warning banner overlay.
         """
-        raise NotImplementedError("Phase 4 implementation: Driver state status banner.")
+        if frame is None or cv2 is None:
+            return frame
+
+        h, w = frame.shape[:2]
+        st_val = getattr(state, "value", str(state))
+
+        if st_val == "DROWSY":
+            bg_color = (0, 0, 190)       # Crimson / Red
+            text_color = (255, 255, 255) # White
+            title_text = f"CRITICAL: DROWSY DRIVER DETECTED ({confidence * 100:.0f}%)"
+        elif st_val == "DISTRACTED":
+            bg_color = (0, 140, 255)     # Amber / Orange
+            text_color = (0, 0, 0)        # Black
+            title_text = f"WARNING: DISTRACTED - FOCUS ON ROAD ({confidence * 100:.0f}%)"
+        else:
+            bg_color = (0, 130, 0)       # Dark Green
+            text_color = (255, 255, 255) # White
+            title_text = f"DRIVER ALERT / ATTENTIVE ({confidence * 100:.0f}%)"
+
+        # Banner bar located at top under the status bar
+        overlay = frame.copy()
+        banner_top = 43
+        banner_height = 32
+        cv2.rectangle(overlay, (0, banner_top), (w, banner_top + banner_height), bg_color, -1)
+        cv2.addWeighted(overlay, 0.85, frame, 0.15, 0, frame)
+
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        cv2.putText(
+            frame,
+            title_text,
+            (14, banner_top + 22),
+            font,
+            0.55,
+            text_color,
+            2,
+            cv2.LINE_AA,
+        )
+
+        if subtext:
+            cv2.putText(
+                frame,
+                subtext[:60],
+                (w // 2, banner_top + 21),
+                font,
+                0.42,
+                text_color,
+                1,
+                cv2.LINE_AA,
+            )
+
+        return frame
 

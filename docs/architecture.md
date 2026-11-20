@@ -392,7 +392,7 @@ Conversion helpers:
 | `draw_head_pose_axes(frame, result, landmarks, config)` | RGB X/Y/Z axes projected from nose landmark |
 
 > [!IMPORTANT]
-> `draw_state_banner()` is intentionally left as `NotImplementedError` — it is a Phase 4 responsibility.
+> `draw_state_banner()` is implemented in Phase 4 to display color-coded status banners across ALERT, DROWSY, and DISTRACTED states.
 
 ### 8.7 Phase 3 Architectural Invariants
 
@@ -400,5 +400,165 @@ Conversion helpers:
 2. **Epsilon guards**: All ratio calculations include a `1e-6` denominator guard to prevent division by zero at extreme landmark positions.
 3. **Graceful degradation**: If `has_face` is `False` or fewer than 468 landmarks are present, `DriverFeatures.valid = False` and all float fields are `0.0` — the pipeline never raises an exception on missing face data.
 4. **ML-ready output**: `to_array()` accepts an arbitrary `feature_order` list, ensuring zero coupling between the feature extractor and the Phase 4 classifier column schema.
-5. **65 unit tests**: Phase 3 adds 31 new tests (8 EAR + 7 MAR + 9 Head Pose + 7 Features) to the existing 34, all running in under 0.3 seconds with zero real camera or MediaPipe model dependency.
+5. **65 unit tests**: Phase 3 verified 65 tests running with zero hardware dependencies.
+
+---
+
+## 9. Phase 4: Hybrid Decision Engine & Machine Learning Classification
+
+### 9.1 Hybrid Decision Architecture Overview
+
+Phase 4 establishes an intelligent, multi-layered decision subsystem that classifies driver behavior into three primary states (`ALERT`, `DROWSY`, `DISTRACTED`). Rather than relying solely on black-box machine learning or static single-frame heuristics, Phase 4 unifies:
+
+1. **Deterministic Temporal Heuristics** (`TemporalRuleEngine`): Physics-grounded safety thresholds evaluated over sliding temporal counters.
+2. **Statistical ML Classification** (`StatePredictor`): Supervised multi-class classifiers (`RandomForest`, `GradientBoosting`, `SVC`) trained on continuous 5D feature vectors `[ear, mar, pitch, yaw, roll]`.
+3. **Safety-Override Arbitration & Weighted Fusion** (`HybridDecisionEngine`): Deterministic rules guarantee safety; machine learning refines boundary decisions.
+4. **Temporal Recovery & Sliding Smoothing**: Hysteresis buffers and majority voting suppress single-frame sensor noise and prevent erratic alarm oscillations.
+
+```mermaid
+flowchart TD
+    subgraph Feature_Input ["Feature Input"]
+        DF["DriverFeatures\n(ear, mar, pitch, yaw, roll)"]
+    end
+
+    subgraph Temporal_Rules ["1. Temporal Rule Engine"]
+        TR["TemporalRuleEngine.update()"]
+        C_EAR["closed_eyes_counter\n(EAR < 0.25)"]
+        C_MAR["yawn_counter\n(MAR > 0.60)"]
+        C_POSE["distraction_counter\n(|Pitch|>15, |Yaw|>20, |Roll|>20)"]
+        C_MISS["missing_face_counter\n(face_detected == False)"]
+
+        TR --> C_EAR
+        TR --> C_MAR
+        TR --> C_POSE
+        TR --> C_MISS
+    end
+
+    subgraph ML_Inference ["2. Machine Learning Inference"]
+        SP["StatePredictor.predict()"]
+        VEC["Ordered Feature Vector\n[ear, mar, pitch, yaw, roll]"]
+        MODEL["scikit-learn Model\n(driver_state_classifier.joblib)"]
+        PROBS["Class Probability Distribution\nP(ALERT), P(DROWSY), P(DISTRACTED)"]
+
+        SP --> VEC --> MODEL --> PROBS
+    end
+
+    subgraph Hybrid_Arbitration ["3. Hybrid Arbitration Engine"]
+        HDE["HybridDecisionEngine.decide()"]
+        CHECK_OVERRIDE{"Sustained Rule\nCounter Limit\nReached?"}
+        CHECK_ML{"ML Model\nLoaded & Online?"}
+        FUSE["Weighted Probabilistic Fusion\nScore = w_rules * P_rule + w_ml * P_ml"]
+        SMOOTH["Sliding-Window Smoothing\n& Recovery Buffer"]
+
+        HDE --> CHECK_OVERRIDE
+        CHECK_OVERRIDE -- "Yes (Critical Safety)" --> OVERRIDE["Safety Override\n(Force DROWSY or DISTRACTED)"]
+        CHECK_OVERRIDE -- "No (Boundary Zone)" --> CHECK_ML
+        CHECK_ML -- "Yes" --> FUSE --> SMOOTH
+        CHECK_ML -- "No (Fallback)" --> RULE_FALLBACK["Rule-Based Fallback"] --> SMOOTH
+        OVERRIDE --> SMOOTH
+    end
+
+    subgraph Output_Result ["4. Output Telemetry"]
+        FINAL_STATE["Resolved DriverState\n(ALERT / DROWSY / DISTRACTED)"]
+        METADATA["Metadata Telemetry\n(Confidences, Component Outputs, Reasons)"]
+    end
+
+    DF --> TR
+    DF --> SP
+    TR --> HDE
+    PROBS --> HDE
+    SMOOTH --> FINAL_STATE
+    SMOOTH --> METADATA
+```
+
+---
+
+### 9.2 Temporal Rule Engine & Heuristic Thresholds
+
+The `TemporalRuleEngine` (`decision_engine/threshold_rules.py`) evaluates continuous biological ratios and orientation angles against safety baselines:
+
+| Metric | Trigger Condition | Consec. Frames | Duration @ 20 FPS | Triggered State |
+|:---|:---|:---:|:---:|:---:|
+| **Eye Closure (EAR)** | `average_ear < 0.25` | `20` frames | `~1.00 s` | `DROWSY` |
+| **Yawning (MAR)** | `mar > 0.60` | `15` frames | `~0.75 s` | `DROWSY` |
+| **Head Pitch (Slumping/Nodding)** | `abs(pitch) > 15.0°` | `25` frames | `~1.25 s` | `DISTRACTED` / `DROWSY` |
+| **Head Yaw (Looking Away)** | `abs(yaw) > 20.0°` | `25` frames | `~1.25 s` | `DISTRACTED` |
+| **Head Roll (Lateral Tilt)** | `abs(roll) > 20.0°` | `25` frames | `~1.25 s` | `DISTRACTED` |
+| **Missing Face** | `face_detected == False` | `25` frames | `~1.25 s` | `DISTRACTED` |
+
+#### Architectural Guarantees:
+- **No Single-Frame False Alarms**: A natural eye blink (lasting 100–300 ms, or ~3–6 frames) increments `closed_eyes_counter` but resets back to 0 immediately upon reopening. Only sustained closure reaching `ear_consec_frames` transitions to `DROWSY`.
+- **Missing-Face Safety**: When landmarks are lost, facial counters decay rather than incrementing falsely. If face absence persists across `distraction_consec_frames`, the engine transitions to `DISTRACTED` (driver turned away completely from camera).
+- **Hysteresis Recovery Duration**: Transitioning from an alarm state back to `ALERT` requires `recovery_consec_frames` (default 5 frames) of sustained normal driving metrics, preventing rapid on-off alarm flutter.
+
+---
+
+### 9.3 Machine Learning Pipeline (`models/`)
+
+The machine learning subsystem consists of two modules:
+
+1. **`models/train_model.py` (`ModelTrainer`)**:
+   - Ingests tabular records matching the schema `[timestamp, ear, mar, pitch, yaw, roll, state]`.
+   - Cleans missing values, NaN, and non-finite numbers.
+   - Performs stratified train/test splitting (`stratify=y`) to maintain class ratios.
+   - Fits scikit-learn estimators (`RandomForestClassifier`, `GradientBoostingClassifier`, or `SVC`).
+   - Computes evaluation metrics: Accuracy, Precision (Macro), Recall (Macro), F1-Score (Macro), Confusion Matrix, and detailed classification report.
+   - Serializes trained weights and metadata artifact to `models/saved_models/driver_state_classifier.joblib`.
+   - Includes `generate_synthetic_testing_data()` strictly for automated CI/CD pipeline verification.
+
+2. **`models/predict.py` (`StatePredictor`)**:
+   - Deserializes `.joblib` model artifacts on startup.
+   - Converts discrete `DriverFeatures` into an ordered DataFrame feature row matching the training schema.
+   - Calls `predict_proba()` to compute probability distributions across `ALERT`, `DROWSY`, and `DISTRACTED`.
+   - **Graceful Offline Degradation**: If the model artifact is absent or corrupted, `is_loaded()` returns `False` and `predict()` safely outputs a baseline fallback distribution without throwing exceptions.
+
+---
+
+### 9.4 Hybrid Arbitration & Temporal Smoothing Strategy
+
+The `HybridDecisionEngine` (`decision_engine/hybrid_classifier.py`) manages arbitration between the heuristic rules and machine learning outputs:
+
+1. **Safety Override Precedence**:
+   - If the rule engine confirms sustained eye closure (`closed_eyes_counter >= ear_consec_frames`) or sustained yawning (`yawn_counter >= mar_consec_frames`), the deterministic safety override immediately forces `DROWSY`. An ML prediction of `ALERT` cannot override physical eye closure.
+2. **Offline Rule Fallback**:
+   - If `StatePredictor.is_loaded() == False`, the system automatically routes 100% of decisions through `TemporalRuleEngine`.
+3. **Weighted Probabilistic Fusion**:
+   - In ambiguous intermediate situations (e.g. eye half-closed, head slightly turned), combined class probabilities are calculated:
+     $$\text{Score}(s) = w_{\text{rules}} \cdot P_{\text{rule}}(s) + w_{\text{ml}} \cdot P_{\text{ml}}(s)$$
+   - Defaults: $w_{\text{rules}} = 0.5$, $w_{\text{ml}} = 0.5$ (normalized to sum to 1.0).
+4. **Sliding-Window Majority Smoothing**:
+   - A temporal queue (`collections.deque(maxlen=smoothing_window)`) stores recent state candidates.
+   - Majority voting with safety bias prevents single-frame noise from triggering alarms.
+
+---
+
+### 9.5 State Transition Diagram
+
+```mermaid
+stateDiagram-v2
+    [*] --> ALERT : System Initialized
+
+    ALERT --> DROWSY : EAR < 0.25 (>= 20 frames)\nOR MAR > 0.60 (>= 15 frames)\nOR ML High Conf Drowsy
+    ALERT --> DISTRACTED : |Pose| > Threshold (>= 25 frames)\nOR Face Lost (>= 25 frames)\nOR ML High Conf Distracted
+
+    DROWSY --> ALERT : Normal Metrics Sustained (>= 5 recovery frames)
+    DROWSY --> DISTRACTED : Head Gaze Shifted While Drowsy
+
+    DISTRACTED --> ALERT : Head Centered & Face Detected (>= 5 recovery frames)
+    DISTRACTED --> DROWSY : Eyes Closed While Distracted
+
+    DROWSY --> DROWSY : Persistent Fatigue Signals
+    DISTRACTED --> DISTRACTED : Persistent Deviation Signals
+    ALERT --> ALERT : Normal Attentive Driving
+```
+
+---
+
+### 9.6 Phase 4 Architectural Invariants & Verification
+
+1. **Safety Override Invariant**: Physiological evidence of prolonged eye closure or yawning always takes precedence over statistical classifier output.
+2. **Offline Resilience**: The runtime application operates seamlessly with or without a trained ML model artifact.
+3. **Zero Test Regressions**: All 65 existing Phase 1–3 tests continue to pass alongside 31 new Phase 4 tests (**total: 96 unit tests passing**).
+4. **Unmirrored Sensor Integrity**: Real-time classification features are strictly computed from unmirrored camera coordinates, preserving true 3D perspective orientation.
+5. **HUD Transparency**: The live video overlay surfaces both the final hybrid state, the ML class confidence, and the underlying rule counter telemetry.
 
