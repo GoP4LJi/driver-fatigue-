@@ -562,3 +562,56 @@ stateDiagram-v2
 4. **Unmirrored Sensor Integrity**: Real-time classification features are strictly computed from unmirrored camera coordinates, preserving true 3D perspective orientation.
 5. **HUD Transparency**: The live video overlay surfaces both the final hybrid state, the ML class confidence, and the underlying rule counter telemetry.
 
+---
+
+## 10. Phase 5 Architecture: Audio Alert System Integration
+
+Phase 5 adds non-blocking auditory safety notifications driven directly by the Phase 4 `HybridDecisionEngine` output via `AlertManager` (`alerts/audio_alert.py`), `AlertConfig` (`config/settings.py`), and `DriverMonitoringApp` (`main.py`).
+
+### 10.1 Audio Alert Architecture
+
+```mermaid
+flowchart LR
+    HDE["HybridDecisionEngine\n(Phase 4 Output)"] -->|"DriverState"| AM["AlertManager\n(alerts/audio_alert.py)"]
+    CFG["AlertConfig\n(config/settings.py)"] -->|"Paths, Cooldown, Volume"| AM
+    AM -->|"ALERT"| STOP["stop_all()\nSilence Active Channel"]
+    AM -->|"DROWSY + Cooldown OK"| D_WAV["drowsy_alert.wav\n(Pygame Mixer Channel)"]
+    AM -->|"DISTRACTED + Cooldown OK"| X_WAV["distracted_alert.wav\n(Pygame Mixer Channel)"]
+    KEY["Keyboard 'M'"] -->|"toggle_mute()"| AM
+    AM -->|"get_status_label()"| HUD["Visualizer.draw_audio_status()\nAUDIO: ON | MUTED | UNAVAILABLE"]
+```
+
+### 10.2 Driver State to Audio Mapping
+
+| Driver State | Audio Behavior | Sound Asset |
+|---|---|---|
+| `DriverState.ALERT` | Silence active playback (`stop_all()` when `stop_on_alert=True`) | None |
+| `DriverState.DROWSY` | Play urgent triple-pulse dual-tone warning (880 Hz + 1320 Hz, 0.82s) | `alerts/sounds/drowsy_alert.wav` |
+| `DriverState.DISTRACTED` | Play ascending two-note attention chime (587.33 Hz -> 783.99 Hz, 0.56s) | `alerts/sounds/distracted_alert.wav` |
+
+### 10.3 Alert Cooldown Mechanism
+
+- Uses `time.monotonic()` to measure elapsed time since `_last_alert_time` (initialized to `None` so the first valid alert always triggers immediately).
+- Any trigger arriving within `cooldown` seconds (`AlertConfig.cooldown_seconds`, default `3.0s`) is suppressed (`trigger_alert()` returns `False`), preventing frame-by-frame audio stutter at 20–30 FPS.
+- If a different alert plays while an earlier channel is still busy, the previous channel is stopped cleanly before starting the new warning sound.
+- Playback runs asynchronously on SDL/Pygame mixer threads so `cv2.read()` and inference loops are never blocked.
+
+### 10.4 Audio Lifecycle
+
+1. **Configuration**: `AlertManager` reads defaults from `AlertConfig` (`enable_audio`, `cooldown_seconds`, `volume`, `sound_drowsy_path`, `sound_distracted_path`, and mixer parameters).
+2. **Initialization (`initialize()`)**: Verifies `pygame` and `pygame.mixer` availability, initializes the mixer once, sets channel count, and preloads existing `.wav` files into memory (zero disk I/O inside the video loop).
+3. **Runtime Dispatch (`trigger_alert()`, `toggle_mute()`, `set_enabled()`, `set_volume()`)**: Routes `DriverState` decisions, handles `'m'` mute/unmute toggles (stopping active sound immediately upon mute), and surfaces `AUDIO: ON`, `AUDIO: MUTED`, or `AUDIO: UNAVAILABLE` via `get_status_label()` to `Visualizer.draw_audio_status()`.
+4. **Teardown (`close()`)**: Called unconditionally in `DriverMonitoringApp.run()`'s `finally` block (as well as `__exit__`), stopping active channels, clearing preloaded `Sound` objects, and calling `pygame.mixer.quit()`.
+
+### 10.5 Error Handling & Graceful Degradation
+
+- **Missing `pygame`**: `initialize()` sets `_available = False`, logs a warning, and returns `False`; the video and HUD pipeline continues normally with `AUDIO: UNAVAILABLE`.
+- **Mixer Initialization Failure**: Exceptions from `pygame.mixer.init()` (e.g., headless servers with no audio hardware) are caught cleanly without crashing `main.py`.
+- **Missing or Corrupt Audio Assets**: Missing `.wav` paths are logged and skipped **without** silently substituting another state's audio file.
+- **Playback Failure**: Errors in `Sound.play()` are caught and logged without consuming the cooldown timestamp or crashing the frame loop.
+
+### 10.6 Integration with HybridDecisionEngine
+
+Inside `DriverMonitoringApp.run()` (`main.py`), each frame flows strictly in order:
+`VideoCamera.read_frame()` -> `FaceDetector.detect_landmarks()` (unmirrored) -> `FeatureExtractor.extract_features()` -> `HybridDecisionEngine.decide()` -> `AlertManager.trigger_alert(current_state)` -> `Visualizer` overlays (`draw_landmarks`, `mirror_frame`, `draw_state_banner`, `draw_telemetry`, `draw_audio_status`).
+

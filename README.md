@@ -178,7 +178,11 @@ The project is structured for execution across 7 distinct phases:
   - **Dataset Schema & Synthetic Testing Generator**: Standardized feature schema `[ear, mar, pitch, yaw, roll, state]` documented in `dataset/schema.md` with optional synthetic testing generator strictly for CI/CD test verification.
   - **Hybrid Decision Engine**: `HybridDecisionEngine` fuses deterministic safety override rules with statistical ML probabilities and sliding-window temporal smoothing.
   - **Live UI & Telemetry**: Dynamic state warning banner, comprehensive HUD card displaying FPS, Face detection status, EAR, MAR, Head Pose, State, ML prediction, and Hybrid classification result.
-- [ ] **Phase 5: Audio Alert System Integration** (`alerts/audio_alert.py`)
+- [x] **Phase 5: Audio Alert System Integration** (`alerts/audio_alert.py`, `alerts/sounds/`, `main.py`) — *Completed*
+  - **Non-Blocking Audio Dispatch**: `AlertManager` powered by `pygame.mixer` preloads `.wav` warning clips at startup (`initialize()`) and triggers asynchronous playback for `DROWSY` (`drowsy_alert.wav`) and `DISTRACTED` (`distracted_alert.wav`) without blocking the webcam loop.
+  - **Cooldown & State Transition Control**: Monotonic cooldown timer (`cooldown_seconds = 3.0s`) prevents repetitive frame-by-frame audio spam; returning to `ALERT` immediately silences active warning channels (`stop_all()`).
+  - **Mute Controls & HUD Badge**: Keyboard shortcut `m` / `M` toggles audio mute/unmute live; HUD displays `AUDIO: ON`, `AUDIO: MUTED`, or `AUDIO: UNAVAILABLE` via `Visualizer.draw_audio_status()`.
+  - **Graceful Degradation**: Handles missing `pygame`, missing audio hardware, corrupt/missing `.wav` files (without silent substitution), and playback errors safely without crashing the video pipeline.
 - [ ] **Phase 6: Interactive Streamlit Dashboard** (`dashboard/app.py`)
 - [ ] **Phase 7: End-to-End Testing, Latency Optimization & Final Release** (`tests/`, `main.py`)
 
@@ -215,6 +219,19 @@ pip install -r requirements.txt
 # 6. Initialize local environment variables
 cp .env.example .env
 ```
+
+### 6.3 Dependency & Audio Installation Notes
+- **Recommended Environment**: Python 3.11 (`python3.11 -m venv venv`).
+- **Core vs Optional Audio**: `pygame>=2.5.0` is used by `alerts/audio_alert.py` for audio notifications. If `pygame` is not installed or no audio hardware is attached, `main.py` continues running with visual HUD alerts (`AUDIO: UNAVAILABLE`).
+- **Windows / Linux**:
+  ```bash
+  pip install pygame>=2.5.0
+  ```
+- **macOS (Apple Silicon / Python 3.14 source build fallback)**: If `pip install pygame` attempts a source build and fails on missing SDL headers, use Python 3.11 or install SDL2 dependencies first via Homebrew:
+  ```bash
+  brew install sdl2 sdl2_image sdl2_mixer sdl2_ttf
+  pip install pygame>=2.5.0
+  ```
 
 ---
 
@@ -260,26 +277,27 @@ curl -o models/saved_models/face_landmarker.task \
 ```
 
 ### 8.2 Automated Unit Test Suite
-Execute the comprehensive automated test suite (**96 unit tests** passing with 100% success rate, covering camera hardware mocking, MediaPipe inference, 2D/3D coordinate transformations, EAR/MAR geometry, solvePnP head-pose estimation, FeatureExtractor contracts, temporal rule counters, ML model training, model serialization, real-time prediction, and hybrid fusion arbitration):
+Execute the automated unit and integration test suite (**115 total tests** across Phases 1–5; see [docs/phase5_testing.md](docs/phase5_testing.md) for full environment-specific verification logs):
 ```bash
 python -m unittest discover -s tests -v
 ```
 
-**Test file breakdown (Phase 1–4):**
+**Test file breakdown (Phase 1–5):**
 | Test File | Tests | Coverage |
 |---|---|---|
 | `test_video_capture.py` | 11 | Camera init, FPS, screenshot, context manager, error handling |
-| `test_face_detection.py` | 19 | MediaPipe landmark extraction, coordinate projection, monotonic timestamps |
+| `test_face_detection.py` | 19 | MediaPipe landmark extraction, coordinate projection, monotonic timestamps *(requires `cv2`, `mediapipe`)* |
 | `test_eye_detection.py` | 8 | EAR formula, bilateral averaging, edge cases, epsilon guard |
 | `test_mouth_detection.py` | 7 | MAR formula, 4-pt/6-pt geometry, edge cases, yawn helper |
-| `test_head_pose.py` | 9 | solvePnP pipeline, angle conventions, camera matrix, failure modes |
-| `test_features.py` | 7 | FeatureExtractor aggregation, to_dict, to_array (custom/default orders) |
+| `test_head_pose.py` | 9 | solvePnP pipeline, angle conventions, camera matrix, failure modes *(requires `cv2`)* |
+| `test_features.py` | 7 | FeatureExtractor aggregation, to_dict, to_array *(1 test requires `cv2`)* |
 | `test_classifier.py` | 3 | DriverState enum targets, counter init/reset, decision logic execution |
 | `test_threshold_rules.py` | 10 | Heuristic thresholds, EAR/MAR/Pose temporal counters, recovery smoothing, missing face |
 | `test_hybrid_classifier.py` | 8 | Rule-ML fusion, safety override precedence, rule fallback, sliding-window smoothing |
 | `test_model_training.py` | 8 | Synthetic generator, dataset loading, ModelTrainer (RF/SVM/GB), metrics, artifact saving |
 | `test_prediction.py` | 6 | StatePredictor loading, offline fallback, inference on DriverFeatures, missing face |
-| **Total** | **96** | **All 96 Tests Passing (0 Failures, 0 Errors, 0 Warnings)** |
+| `test_audio_alert.py` | 19 | AlertManager lifecycle, cooldown, mute/unmute, missing deps/WAVs, WAV validity, `main.py` integration |
+| **Total** | **115** | **19/19 Phase 5 tests passing; 102/115 passing without `cv2`/`mediapipe`** |
 
 ### 8.3 Machine Learning Model Training & Evaluation
 To train a classifier on feature records using scikit-learn:
@@ -299,10 +317,15 @@ python models/train_model.py --model-type svm
 > **Dataset Ethics & Real-World Validation**:
 > Synthetic data generated by `--generate-synthetic` is strictly intended for software integration testing and continuous integration verification. Real-world safety claims require genuine human benchmark datasets (e.g. YawDD or NTHU).
 
-### 8.4 Phase 4 Real-Time Hybrid Decision Monitoring
-- **Interactive Live Feed** (Full Hybrid Telemetry HUD + Color-Coded State Banner):
+### 8.4 Phase 5 Real-Time Hybrid Decision & Audio Alert Monitoring
+- **Interactive Live Feed** (Hybrid Telemetry HUD + Color-Coded State Banner + Non-Blocking Audio Alerts):
   ```bash
   python main.py
+  ```
+- **Start Muted or Customize Cooldown / Volume**:
+  ```bash
+  python main.py --no-audio
+  python main.py --alert-cooldown 4.0 --alert-volume 0.6
   ```
 - **Live Preview with Custom ML and Rule Weights**:
   ```bash
@@ -316,29 +339,42 @@ python models/train_model.py --model-type svm
   ```bash
   python main.py --draw-mesh
   ```
-- **Headless Console Verification** (30-frame live verification loop, prints classification telemetry, exits cleanly):
+- **Headless Console Verification** (30-frame live verification loop, prints classification telemetry & audio status, exits cleanly):
   ```bash
   python main.py --no-gui
   ```
 - **Keyboard Shortcuts during Live Video**:
   - `s` / `S`: Capture mirrored preview screenshot with HUD annotations to `screenshots/`
-  - `q`, `Q`, or `ESC`: Gracefully terminate and release all camera and detector resources
+  - `m` / `M`: Toggle audio alerts between `AUDIO: ON` and `AUDIO: MUTED` (silences active playback immediately on mute)
+  - `q`, `Q`, or `ESC`: Gracefully terminate and release all camera, detector, and audio mixer resources
+
+### 8.5 Audio Architecture & Troubleshooting
+- **Audio Assets**: `alerts/sounds/drowsy_alert.wav` (urgent triple-pulse dual-tone, 0.82s) and `alerts/sounds/distracted_alert.wav` (ascending two-note chime, 0.56s).
+- **Audio Architecture**: `AlertManager` (`alerts/audio_alert.py`) preloads WAV assets once during `initialize()`, enforces a monotonic cooldown (`3.0s` default) to prevent frame-by-frame repetition, silences active playback when returning to `DriverState.ALERT`, and releases the mixer cleanly in `finally`.
+- **HUD Status Badges**:
+  - `AUDIO: ON` — Pygame mixer initialized and alerts unmuted.
+  - `AUDIO: MUTED` — Alerts silenced via `M` key, `--no-audio`, or `ENABLE_AUDIO_ALERTS=False`.
+  - `AUDIO: UNAVAILABLE` — `pygame` missing or audio hardware initialization failed (visual alerts continue unaffected).
+- **Troubleshooting**:
+  - *No sound heard*: Check the HUD badge (`AUDIO: ON` vs `MUTED` vs `UNAVAILABLE`), verify `ALERT_VOLUME` in `.env`, and confirm system output device is active.
+  - *`AUDIO: UNAVAILABLE` on startup*: Install `pygame>=2.5.0` in the project virtual environment (Python 3.11 recommended).
+  - *Missing `.wav` warning in logs*: Verify `SOUND_DROWSY_PATH` and `SOUND_DISTRACTED_PATH` point to valid PCM `.wav` files; missing files are skipped rather than substituted.
 
 ---
 
 ## 9. Architectural Integrity & Verification Checklist
 
 ### Verification Checklist:
-- [x] Strict separation between detection engine, classification logic, and user interface.
+- [x] Strict separation between detection engine, classification logic, audio actuation, and user interface.
 - [x] Zero circular dependencies between packages.
 - [x] Strongly typed data transfer contracts (`DriverFeatures`, `DriverState`).
 - [x] Deterministic safety override ensuring prolonged eye closure or yawning always triggers `DROWSY`.
 - [x] Graceful degradation to pure rule engine when ML model is missing or offline.
+- [x] Graceful degradation to visual-only HUD alerts when `pygame`, audio hardware, or `.wav` assets are unavailable.
 - [x] Unmirrored camera sensor frame preserved for inference; preview horizontally mirrored for natural driver ergonomics.
-- [x] 96 automated unit tests passing in ~2.6 seconds.
+- [x] 19/19 Phase 5 audio unit & integration tests passing (with mocked hardware/audio); 102/115 total suite tests passing in the current Python 3.14 environment lacking `cv2`/`mediapipe`.
 
-### External Asset Requirements (Identified for Phase 5):
-- Alert sound files: Add `drowsy_alert.wav` and `distracted_alert.wav` into `alerts/sounds/`.
-- Real labeled data: Populate `dataset/driver_features.csv` with genuine driver recordings.
+### External Asset Requirements:
+- Real labeled data: Populate `dataset/driver_features.csv` with genuine driver recordings (for Phase 6/7 ML refinement).
 
 # driver-fatigue-

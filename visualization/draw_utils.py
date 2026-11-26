@@ -368,3 +368,55 @@ class Visualizer:
 
         return frame
 
+    def draw_audio_status(self, frame: np.ndarray, audio_status: str) -> np.ndarray:
+        """Render the current audio alert status badge on the video frame.
+
+        Displays one of 'AUDIO: ON', 'AUDIO: MUTED', or 'AUDIO: UNAVAILABLE'
+        in the upper-right region below the status banner to avoid HUD overlap.
+
+        Args:
+            frame: Target BGR frame.
+            audio_status: Status label string from AlertManager.get_status_label().
+
+        Returns:
+            np.ndarray: Annotated BGR frame with audio status badge.
+        """
+        if frame is None or cv2 is None or not audio_status:
+            return frame
+
+        h, w = frame.shape[:2]
+        upper = audio_status.upper()
+        if "UNAVAILABLE" in upper:
+            text_color = (120, 120, 255)  # Soft Red / Unavailable
+            border_color = (80, 80, 180)
+        elif "MUTED" in upper:
+            text_color = (0, 200, 255)    # Amber / Muted
+            border_color = (0, 150, 200)
+        else:
+            text_color = (0, 255, 0)      # Green / Active
+            border_color = (0, 180, 0)
+
+        badge_w = 185
+        badge_h = 28
+        x1 = max(0, w - badge_w - 10)
+        y1 = 82
+        x2 = w - 10
+        y2 = min(h - 1, y1 + badge_h)
+
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (x1, y1), (x2, y2), (15, 15, 15), -1)
+        cv2.addWeighted(overlay, 0.78, frame, 0.22, 0, frame)
+        cv2.rectangle(frame, (x1, y1), (x2, y2), border_color, 1)
+
+        cv2.putText(
+            frame,
+            audio_status,
+            (x1 + 10, y1 + 19),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.45,
+            text_color,
+            1,
+            cv2.LINE_AA,
+        )
+        return frame
+

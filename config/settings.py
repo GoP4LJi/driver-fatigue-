@@ -155,14 +155,33 @@ class ThresholdConfig:
     distraction_consec_frames: int = int(os.getenv("DISTRACTION_CONSEC_FRAMES", "25"))
 
 
+def _resolve_project_path(env_key: str, default_path: Path) -> Path:
+    """Resolve an optional path override relative to BASE_DIR when non-absolute."""
+    raw = os.getenv(env_key)
+    if not raw:
+        return default_path
+    candidate = Path(raw)
+    return candidate if candidate.is_absolute() else BASE_DIR / candidate
+
+
 @dataclass(frozen=True)
 class AlertConfig:
-    """Audio alert triggers and cooldown configuration."""
-    enable_audio: bool = os.getenv("ENABLE_AUDIO_ALERTS", "True").lower() in ("true", "1")
+    """Audio alert triggers, sound assets, cooldown, and Pygame Mixer settings."""
+    enable_audio: bool = os.getenv("ENABLE_AUDIO_ALERTS", "True").lower() in ("true", "1", "yes")
     cooldown_seconds: float = float(os.getenv("ALERT_COOLDOWN_SECONDS", "3.0"))
-    volume: float = float(os.getenv("ALERT_VOLUME", "0.8"))
-    sound_drowsy_path: Path = SOUNDS_DIR / "drowsy_alert.wav"
-    sound_distracted_path: Path = SOUNDS_DIR / "distracted_alert.wav"
+    volume: float = max(0.0, min(1.0, float(os.getenv("ALERT_VOLUME", "0.8"))))
+    sound_drowsy_path: Path = _resolve_project_path(
+        "SOUND_DROWSY_PATH", SOUNDS_DIR / "drowsy_alert.wav"
+    )
+    sound_distracted_path: Path = _resolve_project_path(
+        "SOUND_DISTRACTED_PATH", SOUNDS_DIR / "distracted_alert.wav"
+    )
+    stop_on_alert: bool = os.getenv("STOP_AUDIO_ON_ALERT", "True").lower() in ("true", "1", "yes")
+    mixer_frequency: int = int(os.getenv("AUDIO_MIXER_FREQUENCY", "44100"))
+    mixer_size: int = int(os.getenv("AUDIO_MIXER_SIZE", "-16"))
+    mixer_channels: int = int(os.getenv("AUDIO_MIXER_CHANNELS", "2"))
+    mixer_buffer: int = int(os.getenv("AUDIO_MIXER_BUFFER", "512"))
+    max_channels: int = int(os.getenv("AUDIO_MAX_CHANNELS", "4"))
 
 
 @dataclass(frozen=True)

@@ -1,9 +1,10 @@
-"""Main application entry point for the Real-Time Driver Fatigue and Distraction Detection System.
+"""Main application entry point for the Real-Time Driver Fatigue and Distraction System.
 
-Phase 4 Entry Point:
+Phase 5 Entry Point:
 Orchestrates real-time video acquisition, MediaPipe Face Landmarker Tasks API detection,
 mathematical feature extraction (Eye Aspect Ratio, Mouth Aspect Ratio, 3D Head Pose solvePnP),
 Hybrid Decision Engine classification (Rule-based heuristics + scikit-learn ML inference + temporal smoothing),
+non-blocking Pygame audio alert notifications with cooldown & mute controls,
 color-coded warning banners, telemetry HUD, mirrored driver preview, screenshot capture,
 and clean resource cleanup.
 """
@@ -19,6 +20,7 @@ try:
 except ImportError:
     cv2 = None
 
+from alerts.audio_alert import AlertManager
 from config.settings import AppConfig, DriverState, settings
 from decision_engine.hybrid_classifier import HybridDecisionEngine
 from detection.face_detection import FaceDetector
@@ -37,6 +39,7 @@ class DriverMonitoringApp:
         face_detector (FaceDetector): MediaPipe Face Landmarker Tasks API wrapper.
         feature_extractor (FeatureExtractor): Physiological and pose feature computation engine.
         hybrid_classifier (HybridDecisionEngine): Fuses temporal rules and machine learning.
+        alert_manager (AlertManager): Non-blocking audio alert dispatcher with cooldown and mute.
         visualizer (Visualizer): Graphical overlay HUD and status banner renderer.
         draw_mesh (bool): Whether to render complete facial tessellation mesh points.
     """
@@ -52,8 +55,11 @@ class DriverMonitoringApp:
         model_path: Optional[Path] = None,
         ml_weight: Optional[float] = None,
         rule_weight: Optional[float] = None,
+        enable_audio: Optional[bool] = None,
+        alert_cooldown: Optional[float] = None,
+        alert_volume: Optional[float] = None,
     ) -> None:
-        """Initialize configuration, camera hardware, face landmarker, and hybrid decision engine."""
+        """Initialize configuration, camera, face landmarker, hybrid engine, and audio alerts."""
         self.config = config or settings
         self.draw_mesh = draw_mesh
 
@@ -87,24 +93,32 @@ class DriverMonitoringApp:
             rule_weight=rule_weight,
         )
 
+        # Phase 5 Audio Alert System setup
+        self.alert_manager = AlertManager(
+            enabled=enable_audio,
+            cooldown=alert_cooldown,
+            volume=alert_volume,
+            config=self.config.alerts,
+        )
+
         self.visualizer = Visualizer()
 
     def run(self, no_gui: bool = False) -> None:
-        """Execute the real-time Phase 4 video capture, feature extraction, and classification loop.
+        """Execute the real-time video capture, feature extraction, classification, and audio alert loop.
 
         Args:
             no_gui: If True, executes in console-only mode without opening an OpenCV GUI window.
         """
         print("=================================================================")
         print("🚗 Real-Time Driver Fatigue and Distraction Detection System")
-        print("▶️  Phase 4: Hybrid Decision Engine & Machine Learning Classification")
+        print("▶️  Phase 5: Hybrid Decision Engine + Audio Alert System")
         print("=================================================================")
         print(f"Device Index: {self.camera.camera_index} | Target: {self.camera.width}x{self.camera.height} @ {self.camera.fps} FPS")
         print(f"Landmarker Model: {self.face_detector.model_path.name} | Mesh Overlay: {self.draw_mesh}")
         ml_status = "LOADED" if self.hybrid_classifier.ml_predictor.is_loaded() else "OFFLINE (Rule Fallback)"
         print(f"ML Classifier : {self.hybrid_classifier.ml_predictor.model_path.name} [{ml_status}]")
         print(f"Fusion Weights: Rules={self.hybrid_classifier.rule_weight:.2f}, ML={self.hybrid_classifier.ml_weight:.2f}")
-        print("Keyboard Controls: Press 's' to Save Screenshot | Press 'q' or ESC to Quit")
+        print("Keyboard Controls: 's': Screenshot | 'm': Mute/Unmute Audio | 'q' or ESC: Quit")
         print("=================================================================")
 
         if cv2 is None:
@@ -113,6 +127,18 @@ class DriverMonitoringApp:
             return
 
         try:
+            audio_ready = self.alert_manager.initialize()
+            if audio_ready:
+                print(
+                    f"✓ Phase 5 AlertManager initialized ({self.alert_manager.get_status_label()} | "
+                    f"Cooldown: {self.alert_manager.cooldown:.1f}s | Volume: {self.alert_manager.volume:.2f})"
+                )
+            else:
+                print(
+                    f"⚠️  Audio alerts unavailable ({self.alert_manager.unavailable_reason}); "
+                    "continuing with visual HUD alerts only."
+                )
+
             with self.camera as cam, self.face_detector as detector:
                 actual_w, actual_h = cam.get_resolution()
                 print(f"✓ Webcam stream active. Negotiated hardware resolution: {actual_w}x{actual_h}")
@@ -121,7 +147,7 @@ class DriverMonitoringApp:
                 print("✓ Phase 4 Hybrid Decision Engine (Rules + ML + Temporal Smoothing) active.")
 
                 if no_gui:
-                    print("Executing console-only detection & hybrid classification (30 frames)...")
+                    print("Executing console-only detection, classification & audio alert check (30 frames)...")
                     detected_count = 0
                     for i in range(30):
                         success, frame = cam.read_frame()
@@ -137,8 +163,9 @@ class DriverMonitoringApp:
                             timestamp=time.time(),
                         )
 
-                        # Evaluate hybrid classifier
+                        # Evaluate hybrid classifier & dispatch audio alert if needed
                         current_state, clf_result = self.hybrid_classifier.decide(features)
+                        self.alert_manager.trigger_alert(current_state)
 
                         if result.has_face:
                             detected_count += 1
@@ -155,6 +182,7 @@ class DriverMonitoringApp:
                                 status = f"NOT DETECTED | STATE: {current_state.value}"
                             print(
                                 f"Captured {i + 1}/30 frames | {status} | "
+                                f"{self.alert_manager.get_status_label()} | "
                                 f"Measured FPS: {cam.get_fps():.1f}"
                             )
                         time.sleep(0.033)
@@ -163,12 +191,12 @@ class DriverMonitoringApp:
                     if screenshot_path:
                         print(f"✓ Screenshot captured and saved to: {screenshot_path}")
                     print(
-                        f"✓ Phase 4 console verification complete. "
+                        f"✓ Phase 5 console verification complete. "
                         f"Face detected in {detected_count}/30 test frames."
                     )
                     return
 
-                window_name = "Driver Monitoring System - Phase 4 Hybrid Decision Feed"
+                window_name = "Driver Monitoring System - Phase 5 Live Feed"
                 cv2.namedWindow(window_name, cv2.WINDOW_AUTOSIZE)
 
                 screenshot_notification = ""
@@ -193,7 +221,10 @@ class DriverMonitoringApp:
                     # 3. Pipeline Step: Phase 4 Hybrid classification (Rules + ML + Temporal smoothing)
                     current_state, clf_result = self.hybrid_classifier.decide(features)
 
-                    # 4. Pipeline Step: Draw landmarks on an unmirrored frame copy
+                    # 4. Pipeline Step: Phase 5 Audio alert dispatch (non-blocking, cooldown-protected)
+                    self.alert_manager.trigger_alert(current_state)
+
+                    # 5. Pipeline Step: Draw landmarks on an unmirrored frame copy
                     annotated_original = frame.copy()
                     if result.has_face:
                         annotated_original = self.visualizer.draw_landmarks(
@@ -211,11 +242,11 @@ class DriverMonitoringApp:
                         status_text = "FACE NOT DETECTED"
                         status_color = (0, 165, 255)  # Amber / Warning
 
-                    # 5. Pipeline Step: Horizontally mirror annotated frame for natural driver preview
+                    # 6. Pipeline Step: Horizontally mirror annotated frame for natural driver preview
                     display_frame = cam.mirror_frame(annotated_original)
                     measured_fps = cam.get_fps()
 
-                    # 6. Pipeline Step: Render top status banner indicating current driver state
+                    # 7. Pipeline Step: Render top status banner indicating current driver state
                     trigger_reason = clf_result.get("rule_telemetry", {}).get("trigger_reason", "")
                     display_frame = self.visualizer.draw_state_banner(
                         display_frame,
@@ -224,36 +255,40 @@ class DriverMonitoringApp:
                         subtext=trigger_reason,
                     )
 
-                    # 7. Pipeline Step: Overlay warning banner if no face is detected
+                    # 8. Pipeline Step: Overlay warning banner if no face is detected
                     if not result.has_face:
                         display_frame = self.visualizer.draw_face_not_detected_banner(display_frame)
 
-                    # 8. Pipeline Step: Render top HUD status bar (FPS, Resolution, Controls)
+                    # 9. Pipeline Step: Render top HUD status bar (FPS, Resolution, Controls)
                     cv2.rectangle(display_frame, (0, 0), (actual_w, 42), (25, 25, 25), -1)
                     hud_text = (
-                        f"FPS: {measured_fps:.1f} | Res: {actual_w}x{actual_h} | "
-                        f"{status_text} | 's': Screenshot | 'q': Quit"
+                        f"FPS: {measured_fps:.1f} | {actual_w}x{actual_h} | "
+                        f"{status_text} | 's': Snap | 'm': Mute | 'q': Quit"
                     )
                     cv2.putText(
                         display_frame,
                         hud_text,
                         (12, 28),
                         cv2.FONT_HERSHEY_SIMPLEX,
-                        0.52,
+                        0.48,
                         status_color,
                         1,
                         cv2.LINE_AA,
                     )
 
-                    # 9. Pipeline Step: Render Phase 4 Telemetry HUD with state & ML prediction
+                    # 10. Pipeline Step: Render Telemetry HUD & Audio Status badge
                     display_frame = self.visualizer.draw_telemetry(
                         display_frame,
                         features,
                         measured_fps,
                         classification_result=clf_result,
                     )
+                    display_frame = self.visualizer.draw_audio_status(
+                        display_frame,
+                        self.alert_manager.get_status_label(),
+                    )
 
-                    # 10. Pipeline Step: Temporary screenshot saved overlay
+                    # 11. Pipeline Step: Temporary screenshot saved overlay
                     if time.time() - notification_timestamp < 2.5 and screenshot_notification:
                         cv2.putText(
                             display_frame,
@@ -272,6 +307,9 @@ class DriverMonitoringApp:
                     if key in (ord("q"), ord("Q"), 27):  # 'q' or ESC
                         print("\nShutdown requested by user.")
                         break
+                    elif key in (ord("m"), ord("M")):  # 'm' for audio mute/unmute
+                        audio_on = self.alert_manager.toggle_mute()
+                        print(f"✓ Audio alerts {'UNMUTED (ON)' if audio_on else 'MUTED'}.")
                     elif key in (ord("s"), ord("S")):  # 's' for screenshot
                         saved_path = cam.save_screenshot(display_frame)
                         if saved_path:
@@ -284,16 +322,17 @@ class DriverMonitoringApp:
         except Exception as e:
             print(f"\n❌ Error during video capture execution: {e}")
         finally:
+            self.alert_manager.close()
             if cv2 is not None and not no_gui:
                 cv2.destroyAllWindows()
                 cv2.waitKey(1)
-            print("✓ Video camera and FaceDetector resources cleanly released.")
+            print("✓ Video camera, FaceDetector, and AlertManager resources cleanly released.")
 
 
 def main() -> None:
     """CLI application entry point."""
     parser = argparse.ArgumentParser(
-        description="Real-Time Driver Fatigue and Distraction Detection System - Phase 4"
+        description="Real-Time Driver Fatigue and Distraction Detection System - Phase 5"
     )
     parser.add_argument(
         "--camera",
@@ -343,6 +382,23 @@ def main() -> None:
         help="Weight for rule engine heuristics in hybrid engine (default: 0.5)",
     )
     parser.add_argument(
+        "--no-audio",
+        action="store_true",
+        help="Start application with audio alerts muted",
+    )
+    parser.add_argument(
+        "--alert-cooldown",
+        type=float,
+        default=settings.alerts.cooldown_seconds,
+        help="Minimum cooldown in seconds between audio alerts (default: 3.0)",
+    )
+    parser.add_argument(
+        "--alert-volume",
+        type=float,
+        default=settings.alerts.volume,
+        help="Audio alert volume from 0.0 to 1.0 (default: 0.8)",
+    )
+    parser.add_argument(
         "--no-gui",
         action="store_true",
         help="Run in headless console mode without opening GUI window (ideal for tests/diagnostics)",
@@ -358,6 +414,9 @@ def main() -> None:
         model_path=args.model_path,
         ml_weight=args.ml_weight,
         rule_weight=args.rule_weight,
+        enable_audio=False if args.no_audio else settings.alerts.enable_audio,
+        alert_cooldown=args.alert_cooldown,
+        alert_volume=args.alert_volume,
     )
     app.run(no_gui=args.no_gui)
 

@@ -66,9 +66,10 @@ dataset/processed/*
 models/saved_models/*
 !models/saved_models/.gitkeep
 
-# Sound Assets (keep folder via .gitkeep)
+# Sound Assets (keep folder via .gitkeep and original Phase 5 WAV alerts)
 alerts/sounds/*
 !alerts/sounds/.gitkeep
+!alerts/sounds/*.wav
 
 # Testing, Linting & Coverage
 .pytest_cache/
